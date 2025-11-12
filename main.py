@@ -1,4 +1,4 @@
-# main.py - Coder-buddy — cleaned UI (logs & quick checks removed)
+# main.py — preview forced to white card + injected CSS for readability
 import os
 import re
 import html
@@ -19,40 +19,37 @@ except Exception:
 
 st.set_page_config(page_title="Coder-buddy — Live Generator & Assistant", layout="wide")
 
-# ---------------- UI header / styling ----------------
+# page styling (preview-frame ensures visible white card)
 st.markdown(
     """
     <style>
-    /* page header */
-    .cb-header { display:flex; gap:16px; align-items:center; padding:20px; 
+    .cb-header { display:flex; gap:16px; align-items:center; padding:20px;
                 background: linear-gradient(90deg, rgba(11,121,255,0.08), rgba(108,92,231,0.04));
                 border-radius:14px; margin-bottom:18px; }
     .cb-brand { font-weight:800; font-size:20px; color:#58a6ff; }
     .cb-sub { color:#94a3b8; margin-top:4px; }
-    /* nice card for form */
-    .cb-card { padding:18px; background: linear-gradient(180deg,#0f172a00,#0000); border-radius:12px; box-shadow:0 8px 30px rgba(2,6,23,0.06); }
-    /* preview container improvements - Streamlit page background is dark so force inner white card */
-    .preview-frame { width:100%; border-radius:12px; overflow:hidden; border:1px solid rgba(15,23,42,0.08); box-shadow: 0 12px 40px rgba(2,6,23,0.08); background: #ffffff; }
-    .muted { color:#94a3b8; font-size:13px; }
+    /* preview container improvements */
+    .preview-frame { width:100%; border-radius:12px; overflow:hidden; border:1px solid rgba(15,23,42,0.08);
+                      box-shadow: 0 12px 40px rgba(2,6,23,0.08); background: #ffffff; padding: 12px; }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
 st.markdown(
-    f"""
+    """
     <div class="cb-header">
       <div>
         <div class="cb-brand">Coder-buddy 💙</div>
         <div class="cb-sub">Ask a question or generate a small web app — preview runs inline (no disk writes by default).</div>
       </div>
-      <div style="margin-left:auto" class="muted">Use GROQ for live answers • Agent fallback available</div>
+      <div style="margin-left:auto" class="cb-sub">Use GROQ for live answers • Agent fallback available</div>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
-# ---------------- helpers (LLM extraction left as before) ----------------
+# ---------- helpers ----------
 def extract_text_from_llm_output(out: Any) -> str:
     try:
         if out is None:
@@ -100,7 +97,6 @@ def extract_text_from_llm_output(out: Any) -> str:
     except Exception:
         return str(out)
 
-
 def call_llm_and_get_text(llm, prompt: str) -> str:
     if llm is None:
         raise RuntimeError("LLM is None")
@@ -124,8 +120,13 @@ def call_llm_and_get_text(llm, prompt: str) -> str:
         errors.append(f"generate failed: {e}")
     raise RuntimeError("LLM invocation failed. Attempts:\n" + "\n".join(errors))
 
+# ---------- preview cleaning + CSS injection ----------
+INJECTED_CSS = """
+/* Force readable colors and white background inside generated preview */
+html, body { background: #ffffff !important; color: #0f172a !important; }
+body { -webkit-font-smoothing:antialiased; font-family: Inter, Arial, sans-serif; }
+"""
 
-# ---------------- preview cleaning helpers (NEW) ----------------
 def strip_triple_backticks_and_lang(s: str) -> str:
     if not s:
         return s
@@ -145,19 +146,35 @@ def extract_inner_html_from_markdown(s: str) -> str:
         return m.group(1).strip()
     return strip_triple_backticks_and_lang(s)
 
+def inject_css_into_html(html_text: str, css: str) -> str:
+    """
+    Ensure the html_text includes <head> and inject css there; if missing, wrap with basic document.
+    """
+    if not html_text:
+        return f"<!doctype html><html><head><style>{css}</style></head><body></body></html>"
+    s = html_text.strip()
+    # if it's fragment starting with <, try to add head
+    if s.lower().startswith("<!doctype") or s.lower().startswith("<html"):
+        if "</head>" in s.lower():
+            # insert css before </head>
+            return re.sub(r"(?i)</head>", f"<style>{css}</style></head>", s, count=1)
+        else:
+            # add a head with css after <html>
+            return re.sub(r"(?i)<html([^>]*)>", r"<html\1><head><style>" + css + "</style></head>", s, count=1)
+    # if it's a fragment not starting with html, wrap into full doc
+    return f"<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><style>{css}</style></head><body>{s}</body></html>"
+
 def clean_preview_html(raw: str) -> str:
     if raw is None:
         return ""
     s = raw.strip()
     s = extract_inner_html_from_markdown(s)
     s = s.replace("```html", "").replace("```", "").strip()
-    if s.lower().startswith("<!doctype") or s.lower().startswith("<html") or s.startswith("<"):
-        return s
-    safe = html.escape(s)
-    return f"<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1' /><style>body{{font-family:Inter,Arial,sans-serif;background:#fff;color:#0f172a;padding:20px}}.card{{max-width:900px;margin:0 auto}}</style></head><body><div class='card'><pre style='white-space:pre-wrap;word-break:break-word'>{safe}</pre></div></body></html>"
+    # if the preview already contains full html, inject CSS into head
+    cleaned = inject_css_into_html(s, INJECTED_CSS)
+    return cleaned
 
-
-# ---------------- inline simple templates ----------------
+# ---------- simple inline templates ----------
 def todo_inline_html() -> str:
     return """<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><style>
 body{font-family:Inter,Arial,sans-serif;background:#f6f8fb;padding:24px}
@@ -181,7 +198,7 @@ body{font-family:Inter,Arial,sans-serif;background:#eef6ff;display:flex;align-it
 const keys=['7','8','9','/','4','5','6','*','1','2','3','-','0','.','=','+'];const keysEl=document.getElementById('keys');const display=document.getElementById('display');let expr='';function render(){display.value=expr;}keys.forEach(k=>{const b=document.createElement('button');b.className='key'+(['/','*','-','+','='].includes(k)?' op':'');b.textContent=k;b.onclick=()=>{if(k==='='){try{expr=String(eval(expr))}catch(e){expr='Error'}}else{expr+=k}render()};keysEl.appendChild(b)});render();
 </script></body></html>"""
 
-# ---------------- local fallback generator (simple) ----------------
+# ---------- local fallback ----------
 def local_custom_generator(prompt: str) -> str:
     p = (prompt or "").strip().lower()
     if any(k in p for k in ["note", "notes", "note-taking", "notes app", "notes maker"]):
@@ -197,7 +214,7 @@ def local_custom_generator(prompt: str) -> str:
     safe = html.escape(prompt or "Generated App")
     return f"<!doctype html><html><head><meta charset='utf-8'></head><body style='font-family:Inter,Arial,sans-serif;padding:24px'><h3>{safe}</h3><p>This is a lightweight scaffold generated from your prompt.</p></body></html>"
 
-# ---------------- form UI ----------------
+# ---------- UI form ----------
 with st.form("gen", clear_on_submit=False):
     st.subheader("Enter your prompt or question")
     template = st.selectbox("Mode", ["Ask (question)", "Generate app (build)"])
@@ -207,8 +224,7 @@ with st.form("gen", clear_on_submit=False):
 
 preview_html: Optional[str] = None
 answer_text: Optional[str] = None
-# keep logs internally (not shown)
-logs = []
+logs = []  # internal only
 
 def looks_like_question_text(s: str) -> bool:
     s = (s or "").strip().lower()
@@ -221,7 +237,7 @@ def looks_like_question_text(s: str) -> bool:
             return True
     return False
 
-# ---------------- run logic ----------------
+# ---------- run logic (unchanged behavior) ----------
 if submit:
     user_text = (prompt or "").strip()
     if not user_text:
@@ -351,14 +367,17 @@ if submit:
             logs.append(traceback.format_exc())
             preview_html = clean_preview_html(f"Error: {str(e)}\n\n{traceback.format_exc()}")
 
-# ---------------- render output ----------------
+# ---------- render output ----------
 st.markdown("---")
 if template == "Ask (question)":
     st.subheader("Answer")
     if answer_text:
         if answer_text.strip().startswith("<") and "<html" in answer_text.lower():
             st.info("LLM returned an HTML snippet — rendering below.")
+            # show HTML snippet inside white preview card
+            st.markdown("<div class='preview-frame'>", unsafe_allow_html=True)
             components.html(clean_preview_html(answer_text), height=480, scrolling=True)
+            st.markdown("</div>", unsafe_allow_html=True)
         elif "\n" in answer_text and len(answer_text) > 240:
             st.code(answer_text)
         else:
@@ -368,8 +387,9 @@ if template == "Ask (question)":
 else:
     st.subheader("Live preview")
     if preview_html:
+        # white card wrapper so preview is always readable
         st.markdown("<div class='preview-frame'>", unsafe_allow_html=True)
-        components.html(preview_html, height=680, scrolling=True)
+        components.html(preview_html, height=720, scrolling=True)
         st.markdown("</div>", unsafe_allow_html=True)
     else:
         st.info("No preview yet. Run generation.")
