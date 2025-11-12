@@ -159,27 +159,134 @@ def combine_files_to_html(built_files: Dict[str, Dict[str, Any]]) -> str:
 
 # Smart local custom generator (works without agent)
 def local_custom_generator(prompt: str) -> str:
-    p = (prompt or "").strip()
-    low = p.lower()
-    # intent heuristics
-    if any(k in low for k in ["todo", "to-do", "task", "tasks"]):
-        return todo_inline_html()
-    if any(k in low for k in ["calc", "calculator", "compute", "sum", "add", "multiply", "+", "-", "*", "/"]):
-        return calc_inline_html()
-    if any(k in low for k in ["form", "signup", "contact", "feedback"]):
-        # simple form scaffold
-        title = html.escape(p or "Form")
+    """
+    Improved local generator that recognizes notes/taking prompts and returns
+    a working inline notes app (localStorage-backed). Falls back to scaffold otherwise.
+    """
+    p = (prompt or "").strip().lower()
+
+    # NOTES app detection
+    if any(k in p for k in ["note", "notes", "note-taking", "note taker", "notes maker", "notes app"]):
         css = """
-body{font-family:Inter,Arial,sans-serif;background:#f8fafc;padding:30px}
-.card{max-width:700px;margin:0 auto;background:#fff;padding:20px;border-radius:12px;box-shadow:0 10px 30px rgba(2,6,23,0.06)}
-label{display:block;margin-top:10px;font-weight:600}
-input,textarea,select{width:100%;padding:10px;border-radius:8px;border:1px solid #e6eef8;margin-top:6px}
-.btn{margin-top:12px;padding:10px 12px;border-radius:10px;background:linear-gradient(90deg,#0b79ff,#6c5ce7);color:white;border:none}
+:root{--bg:#f6f8fb;--card:#fff;--accent:#6c5ce7}
+body{margin:0;font-family:Inter, Arial, sans-serif;background:var(--bg);padding:28px}
+.container{max-width:960px;margin:0 auto}
+.header{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.title{font-size:20px;color:#0f172a;margin:0}
+.controls{display:flex;gap:8px}
+.input{flex:1;padding:10px;border-radius:10px;border:1px solid #e6eef8}
+.btn{background:linear-gradient(90deg,#0b79ff,#6c5ce7);color:#fff;padding:10px 14px;border-radius:10px;border:none;cursor:pointer}
+.grid{display:grid;grid-template-columns:1fr 340px;gap:18px;margin-top:18px}
+.notes{display:flex;flex-direction:column;gap:10px}
+.card{background:var(--card);padding:12px;border-radius:10px;box-shadow:0 8px 30px rgba(2,6,23,0.04);border:1px solid #f1f5f9}
+.note-title{font-weight:700;margin:0 0 6px 0}
+.note-meta{font-size:12px;color:#64748b;margin-top:8px}
+.search{width:100%;padding:10px;border-radius:8px;border:1px solid #e6eef8;margin-bottom:10px}
+.small{font-size:13px;color:#64748b}
+.list-item{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:8px;border-radius:8px;border:1px dashed #eef2ff;background:#fcfdff}
+.opt-btn{background:#f1f5f9;border:0;padding:6px 8px;border-radius:8px;cursor:pointer}
+textarea.note-area{width:100%;height:120px;border-radius:8px;padding:10px;border:1px solid #e6eef8}
 """
-        html_body = f"""<!doctype html><html><head><meta charset='utf-8' /><meta name='viewport' content='width=device-width,initial-scale=1' /><style>{css}</style></head><body><div class='card'><h2>{title}</h2><form><label>Name<input placeholder='Your name'/></label><label>Email<input placeholder='you@example.com'/></label><label>Message<textarea rows='4'></textarea></label><button class='btn' type='button' onclick='alert(\"Submitted (demo)\")'>Submit</button></form></div></body></html>"""
-        return html_body
-    # fallback: generate a modern scaffold that embeds the prompt and a small interactive example
-    safe = html.escape(p or "Generated App")
+        script = r"""
+const root = document.getElementById('app-root');
+root.innerHTML = `<div class="container"><div class="header"><div><h2 class="title">Notes</h2><div class="small">Simple notes — stored in your browser (localStorage)</div></div></div>
+<div class="grid"><div>
+  <div class="card"><div style="display:flex;gap:8px;align-items:center"><input id="filter" class="search" placeholder="Search notes..."/></div>
+    <div id="notes-list" style="margin-top:12px"></div></div>
+</div>
+<div>
+  <div class="card">
+    <div style="display:flex;gap:8px;margin-bottom:10px">
+      <input id="title" class="input" placeholder="Note title" />
+      <button id="save" class="btn">Save</button>
+    </div>
+    <textarea id="body" class="note-area" placeholder="Write your note..."></textarea>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button id="clear-all" class="opt-btn">Clear all</button>
+      <div style="flex:1"></div>
+      <div class="small">Notes are stored locally only.</div>
+    </div>
+  </div>
+</div></div></div>`;
+
+const notesKey = 'cb_notes_v1';
+let notes = JSON.parse(localStorage.getItem(notesKey) || '[]');
+
+function saveNotes(){ localStorage.setItem(notesKey, JSON.stringify(notes)); }
+function uid(){ return Math.random().toString(36).slice(2,9); }
+function formatDate(ts){ const d = new Date(ts); return d.toLocaleString(); }
+
+function renderList(filterText=''){
+  const list = document.getElementById('notes-list');
+  list.innerHTML = '';
+  const filtered = notes.filter(n => (n.title + ' ' + n.body).toLowerCase().includes(filterText.toLowerCase()));
+  if(filtered.length===0){ list.innerHTML = '<div class="small">No notes yet.</div>'; return; }
+  filtered.forEach(n => {
+    const el = document.createElement('div');
+    el.className = 'list-item';
+    el.innerHTML = `<div style="flex:1"><strong>${escapeHtml(n.title||'(untitled)')}</strong><div class="small">${escapeHtml(n.body.slice(0,120))}</div><div class="note-meta">${formatDate(n.ts)}</div></div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <button class="opt-btn" data-edit="${n.id}">Edit</button>
+        <button class="opt-btn" data-del="${n.id}">Delete</button>
+      </div>`;
+    list.appendChild(el);
+  });
+}
+
+function escapeHtml(s){ return (s||'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
+
+document.getElementById('save').onclick = ()=>{
+  const title = document.getElementById('title').value.trim();
+  const body = document.getElementById('body').value.trim();
+  if(!body && !title) return;
+  // if editing existing: check dataset
+  const editingId = document.getElementById('save').dataset.editing;
+  if(editingId){
+    const idx = notes.findIndex(x=>x.id===editingId);
+    if(idx>=0){ notes[idx].title = title; notes[idx].body = body; notes[idx].ts = Date.now(); }
+    delete document.getElementById('save').dataset.editing;
+  } else {
+    notes.unshift({id: uid(), title, body, ts: Date.now()});
+  }
+  saveNotes(); document.getElementById('title').value=''; document.getElementById('body').value=''; renderList(document.getElementById('filter').value);
+};
+
+document.getElementById('filter').oninput = (e)=> renderList(e.target.value);
+
+document.getElementById('notes-list').onclick = (e)=>{
+  const d = e.target;
+  const edit = d.closest('button[data-edit]');
+  const del = d.closest('button[data-del]');
+  if(edit){
+    const id = edit.dataset.edit;
+    const note = notes.find(x=>x.id===id);
+    if(note){ document.getElementById('title').value = note.title; document.getElementById('body').value = note.body; document.getElementById('save').dataset.editing = id; window.scrollTo({top:0,behavior:'smooth'}); }
+  } else if(del){
+    const id = del.dataset.del;
+    notes = notes.filter(x=>x.id!==id);
+    saveNotes(); renderList(document.getElementById('filter').value);
+  }
+};
+
+document.getElementById('clear-all').onclick = ()=>{ if(confirm('Clear all notes?')){ notes=[]; saveNotes(); renderList(''); } };
+
+renderList('');
+"""
+        return f"<!doctype html><html><head><meta charset='utf-8' /><meta name='viewport' content='width=device-width,initial-scale=1' /><style>{css}</style></head><body><div id='app-root'></div><script>{script}</script></body></html>"
+
+    # other heuristics (games etc) unchanged from previous:
+    # if request is for snake, tic-tac-toe, calculator, todo, fallback scaffold
+    if "snake" in p:
+        return snake_game_html()  # assumes you have snake_game_html defined above
+    if "tic" in p and "toe" in p:
+        return tic_tac_toe_html()
+    if "calculator" in p or "calc" in p:
+        return calc_inline_html()
+    if "todo" in p or "task" in p:
+        return todo_inline_html()
+
+    # final fallback: a simple interactive scaffold
+    safe = html.escape(prompt or "Generated App")
     css = """
 body{font-family:Inter,Arial,sans-serif;background:linear-gradient(180deg,#f8fafc,#fff);padding:28px}
 .wrapper{max-width:900px;margin:0 auto}
@@ -194,8 +301,8 @@ h1{margin:0;font-size:20px;color:#0f172a}
 function esc(s){{return s.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')}} 
 document.addEventListener('DOMContentLoaded',()=>{{
   const root=document.getElementById('app-root');
-  root.innerHTML=`<div class="wrapper"><div class="card"><header><h1>{safe}</h1></header><p class="desc">This is a small interactive scaffold generated from your prompt: <strong>{safe}</strong></p><div class="preview"><button class="btn" id="demo">Click me</button><div id="out" style="margin-top:12px"></div></div></div></div>`;
-  document.getElementById('demo').onclick = ()=> document.getElementById('out').innerText = 'Hello — this demo responds to your prompt!';
+  root.innerHTML=`<div class="wrapper"><div class="card"><header><h1>{html.escape(prompt or 'Generated App')}</h1></header><p class="desc">This is a scaffold generated from: <strong>{html.escape(prompt or '')}</strong></p><div class="preview"><button class="btn" id="demo">Click demo</button><div id="out" style="margin-top:12px"></div></div></div></div>`;
+  document.getElementById('demo').onclick = ()=> document.getElementById('out').innerText = 'Interactive demo for: {html.escape(prompt or "")}';
 }});
 """
     return f"<!doctype html><html><head><meta charset='utf-8' /><meta name='viewport' content='width=device-width,initial-scale=1' /><style>{css}</style></head><body><div id='app-root'></div><script>{script}</script></body></html>"
