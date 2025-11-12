@@ -1,10 +1,9 @@
-# main.py — Coder-buddy with device emulator (Desktop / Mobile / Tablet)
+# main.py — Coder-buddy (modern UI, toolbar, preview download)
 import os
 import re
 import html
 import traceback
 from typing import Any, Optional
-import urllib.parse
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -26,7 +25,8 @@ st.markdown(
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
     <style>
     :root{
-      --bg:#0b1020; --card:#0f1724; --muted:#94a3b8; --accent1:#6c5ce7; --accent2:#0b79ff; --glass: rgba(255,255,255,0.04);
+      --bg:#0b1020; --card:#0f1724; --muted:#94a3b8; --accent1:#6c5ce7; --accent2:#0b79ff;
+      --glass: rgba(255,255,255,0.04);
     }
     html,body { background: var(--bg); color: #e6eef8; font-family: Inter, Arial, sans-serif; }
     .hero { display:flex; gap:20px; align-items:center; padding:28px; border-radius:14px;
@@ -40,15 +40,15 @@ st.markdown(
     .form-title { font-size:20px; font-weight:700; color:#fff; margin-bottom:6px; }
     .muted { color:var(--muted); }
     .primary-btn { background: linear-gradient(90deg,var(--accent2),var(--accent1)); color:white; border:none; padding:10px 16px; border-radius:10px; font-weight:700; cursor:pointer; }
+    .secondary { background: transparent; border:1px solid rgba(255,255,255,0.06); color:var(--muted); padding:8px 10px; border-radius:8px; }
     .preview-frame { width:100%; border-radius:12px; overflow:hidden; border:1px solid rgba(255,255,255,0.04); background:#fff; padding:10px; }
     .toolbar { display:flex; gap:8px; align-items:center; justify-content:space-between; margin-bottom:10px; }
     .toolbar-left { display:flex; gap:8px; align-items:center; }
     .small-muted { color: #677487; font-size:13px }
-    .device-wrap { display:flex; justify-content:center; padding:12px; }
-    .device { background: #111; border-radius:36px; padding:12px; display:inline-block; }
-    .device-inner { background:#fff; border-radius:20px; overflow:hidden; box-shadow:0 10px 30px rgba(2,6,23,0.08); }
-    .device-label { text-align:center; font-size:12px; color:#94a3b8; margin-bottom:8px; }
-    @media(max-width:900px){ .hero { padding:18px } .logo{font-size:18px} }
+    /* inputs */
+    .stTextArea > label { color:#fff !important; }
+    .stSelectbox > label { color:#fff !important; }
+    .stCheckbox > label { color:#fff !important; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -68,7 +68,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ---------- helper utilities ----------
+# ---------- helper functions (LLM & preview cleaning) ----------
 def extract_text_from_llm_output(out: Any) -> str:
     try:
         if out is None:
@@ -87,6 +87,7 @@ def extract_text_from_llm_output(out: Any) -> str:
             return str(getattr(out, "content"))
         if hasattr(out, "text") and getattr(out, "text"):
             return str(getattr(out, "text"))
+        # fallback heuristics
         s = str(out)
         m = re.search(r"content=(?:'|\")(.+?)(?:'|\")", s)
         if m:
@@ -115,6 +116,7 @@ def call_llm_and_get_text(llm, prompt: str) -> str:
         errors.append("generate:" + str(e))
     raise RuntimeError("LLM invocation failed: " + " | ".join(errors))
 
+# preview cleaning & CSS injection
 INJECTED_CSS = """
 html, body { background: #ffffff !important; color: #0f172a !important; }
 body { font-family: Inter, Arial, sans-serif; -webkit-font-smoothing:antialiased; }
@@ -159,7 +161,7 @@ def clean_preview_html(raw: str) -> str:
     cleaned = inject_css_into_html(s, INJECTED_CSS)
     return cleaned
 
-# ---------- small built-in templates ----------
+# ---------- small templates ----------
 def todo_inline_html() -> str:
     return """<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><style>
 body{font-family:Inter,Arial,sans-serif;background:#f6f8fb;padding:24px}
@@ -168,7 +170,7 @@ body{font-family:Inter,Arial,sans-serif;background:#f6f8fb;padding:24px}
 .btn{padding:8px 12px;border-radius:8px;border:none;background:#0b79ff;color:#fff}
 .list{margin-top:12px}
 </style></head><body><div class='card'><h3>Todo</h3><div><input id='t' class='input' placeholder='Add task'><button id='a' class='btn'>Add</button></div><ul id='l' class='list'></ul></div><script>
-const LKEY='cb_todos_v6';let l=JSON.parse(localStorage.getItem(LKEY)||'[]');function r(){const el=document.getElementById('l');el.innerHTML='';l.forEach((t,i)=>{const li=document.createElement('li');li.innerText=t;li.onclick=()=>{l.splice(i,1);localStorage.setItem(LKEY,JSON.stringify(l));r()};el.appendChild(li)})}document.getElementById('a').onclick=()=>{const v=document.getElementById('t').value.trim();if(!v) return; l.unshift(v); localStorage.setItem(LKEY,JSON.stringify(l)); document.getElementById('t').value=''; r()};r();
+const LKEY='cb_todos_v4';let l=JSON.parse(localStorage.getItem(LKEY)||'[]');function r(){const el=document.getElementById('l');el.innerHTML='';l.forEach((t,i)=>{const li=document.createElement('li');li.innerText=t;li.onclick=()=>{l.splice(i,1);localStorage.setItem(LKEY,JSON.stringify(l));r()};el.appendChild(li)})}document.getElementById('a').onclick=()=>{const v=document.getElementById('t').value.trim();if(!v) return; l.unshift(v); localStorage.setItem(LKEY,JSON.stringify(l)); document.getElementById('t').value=''; r()};r();
 </script></body></html>"""
 
 def calc_inline_html() -> str:
@@ -177,7 +179,7 @@ body{font-family:Inter,Arial,sans-serif;background:#eef6ff;display:flex;align-it
 .calc-card{width:320px;background:#fff;padding:18px;border-radius:14px;box-shadow:0 12px 40px rgba(2,6,23,0.06)}
 #display{width:100%;height:54px;border-radius:10px;border:1px solid #eef2ff;margin-bottom:12px;padding:10px;font-size:20px;text-align:right}
 .keys{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
-.key{padding:12px;border-radius:12px;border:none;background:#f6f7fb;font-size:16px;cursor:pointer}
+.key{padding:12px;border-radius:10px;border:none;background:#f6f7fb;font-size:16px;cursor:pointer}
 .key.op{background:linear-gradient(90deg,#6c5ce7,#0b79ff);color:white}
 </style></head><body><div class='calc-card'><input id='display' disabled /><div id='keys' class='keys'></div></div><script>
 const keys=['7','8','9','/','4','5','6','*','1','2','3','-','0','.','=','+'];const keysEl=document.getElementById('keys');const display=document.getElementById('display');let expr='';function render(){display.value=expr;}keys.forEach(k=>{const b=document.createElement('button');b.className='key'+(['/','*','-','+','='].includes(k)?' op':'');b.textContent=k;b.onclick=()=>{if(k==='='){try{expr=String(eval(expr))}catch(e){expr='Error'}}else{expr+=k}render()};keysEl.appendChild(b)});render();
@@ -192,13 +194,14 @@ def local_custom_generator(prompt: str) -> str:
     if "tic" in p and "toe" in p:
         return "<!doctype html><html><body><h3>Tic Tac Toe placeholder</h3></body></html>"
     if any(k in p for k in ["calc", "calculator", "stopwatch", "timer"]):
+        # prefer calculator / stopwatch; use calc template for simplicity
         return calc_inline_html()
     if any(k in p for k in ["todo", "task", "todo list"]):
         return todo_inline_html()
     safe = html.escape(prompt or "Generated App")
     return f"<!doctype html><html><head><meta charset='utf-8'></head><body style='font-family:Inter,Arial,sans-serif;padding:24px'><h3>{safe}</h3><p>Light scaffold generated from your prompt.</p></body></html>"
 
-# ---------- UI Form ----------
+# ---------- form UI (left column) ----------
 col1, col2 = st.columns([1.1, 1])
 with col1:
     st.markdown('<div class="panel">', unsafe_allow_html=True)
@@ -209,6 +212,7 @@ with col1:
     run_btn = st.button("Run", key="run", help="Generate / Ask")
     st.markdown("</div>", unsafe_allow_html=True)
 with col2:
+    # right column: quick CTA / examples
     st.markdown('<div style="padding:12px;border-radius:12px">', unsafe_allow_html=True)
     st.markdown("<div style='font-weight:700;font-size:16px;margin-bottom:6px'>Examples</div>", unsafe_allow_html=True)
     st.markdown("<div class='muted'>Try prompts like:</div>", unsafe_allow_html=True)
@@ -220,12 +224,25 @@ with col2:
       <li><code>Create a snake game in plain JavaScript</code></li>
     </ul>
     """, unsafe_allow_html=True)
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+    st.markdown("<div class='muted'>Preview toolbar appears once generation finishes. Use Download to save the preview.</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-# ---------- Run logic ----------
+# ---------- run logic ----------
 preview_html: Optional[str] = None
 answer_text: Optional[str] = None
 _internal_logs = []
+
+def looks_like_question_text(s: str) -> bool:
+    s = (s or "").strip().lower()
+    if not s:
+        return False
+    if s.endswith("?"):
+        return True
+    for w in ("what", "who", "how", "why", "when", "where", "explain", "difference", "compare"):
+        if s.startswith(w + " ") or (" " + w + " ") in s:
+            return True
+    return False
 
 if run_btn:
     user_text = (prompt or "").strip()
@@ -263,11 +280,11 @@ if run_btn:
                             _internal_logs.append("Answered with agent")
                         except Exception as e:
                             _internal_logs.append("Agent failed: " + str(e))
-                            answer_text = "No GROQ available. Enable GROQ_API_KEY for live answers, or try Generate mode."
+                            answer_text = "No GROQ available. Enable GROQ_API_KEY for live answers, or try Generate app mode."
                     else:
-                        answer_text = "No GROQ available. Enable GROQ_API_KEY for live answers, or try Generate mode."
+                        answer_text = "No GROQ available. Enable GROQ_API_KEY for live answers, or try Generate app mode."
             else:
-                # Generate app
+                # generate app
                 if llm is not None:
                     try:
                         gen_prompt = f"Produce a single self-contained HTML document implementing: {user_text}\nReturn only the HTML document."
@@ -277,7 +294,7 @@ if run_btn:
                         _internal_logs.append("Generated app via GROQ")
                     except Exception as e:
                         _internal_logs.append("GROQ generation failed: " + str(e))
-                        # fallback to agent/local
+                        # try agent or local
                         if agent is not None:
                             try:
                                 payload = {"user_prompt": user_text}
@@ -346,18 +363,25 @@ if run_btn:
                     else:
                         preview_html = clean_preview_html(local_custom_generator(user_text))
                         _internal_logs.append("Generated from prompt locally (no LLM or agent)")
+        except Exception as e:
+            _internal_logs.append("Unexpected error: " + str(e))
+            _internal_logs.append(traceback.format_exc())
+            preview_html = clean_preview_html(f"<pre>{html.escape(traceback.format_exc())}</pre>")
 
-# ---------- render results & device emulator ----------
+# ---------- render results ----------
 st.markdown("---")
 if mode == "Ask (question)":
     st.markdown('<div class="panel">', unsafe_allow_html=True)
     st.subheader("Answer")
     if answer_text:
+        # render simple plain text or code nicely
         if "\n" in answer_text and len(answer_text) > 300:
             st.code(answer_text)
         else:
+            # allow small HTML returns to be shown as text or rendered if HTML-like
             if answer_text.strip().startswith("<") and "<html" in answer_text.lower():
                 st.info("HTML returned — rendering below.")
+                # show inside white preview card
                 st.markdown("<div class='preview-frame'>", unsafe_allow_html=True)
                 components.html(clean_preview_html(answer_text), height=420, scrolling=True)
                 st.markdown("</div>", unsafe_allow_html=True)
@@ -367,57 +391,29 @@ if mode == "Ask (question)":
         st.info("No answer produced yet. Try Generate mode or enable GROQ for live answers.")
     st.markdown("</div>", unsafe_allow_html=True)
 else:
+    # toolbar + preview area
     st.markdown('<div class="panel">', unsafe_allow_html=True)
     st.subheader("Live preview")
-
-    # Device controls
-    device = st.selectbox("Device", ["Desktop", "Mobile (375×812)", "Tablet (768×1024)"])
-    preview_height = st.slider("Preview height (px)", min_value=300, max_value=1200, value=680, step=50, key="ph")
-    scale = st.slider("Preview scale (%) — shrink device to fit", min_value=40, max_value=100, value=92, step=1, key="scale")
-
-    # toolbar: download only (open-in-new-tab removed)
-    toolbar_col1, toolbar_col2 = st.columns([3, 1])
+    toolbar_col1, toolbar_col2 = st.columns([3,1])
     with toolbar_col1:
-        st.markdown('<div class="toolbar"><div class="toolbar-left"><div class="small-muted">Preview</div></div></div>', unsafe_allow_html=True)
+        st.markdown('<div class="toolbar"><div class="toolbar-left">', unsafe_allow_html=True)
+        st.markdown('<div class="small-muted">Preview</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
     with toolbar_col2:
         if preview_html:
+            # Download button (keeps)
             b = preview_html.encode("utf-8")
             st.download_button("Download HTML", b, file_name="preview.html", mime="text/html")
-            # NOTE: "Open in new tab" data URL removed because many browsers/hosts block large data URLs
-    # Show preview in device frame
+            # NOTE: Open-in-new-tab removed intentionally (data URLs are unreliable / blocked)
+    st.markdown('</div>', unsafe_allow_html=True)
+
     if preview_html:
-        if device.startswith("Mobile"):
-            dev_w = 375
-        elif device.startswith("Tablet"):
-            dev_w = 768
-        else:
-            dev_w = None  # full width
-        if dev_w:
-            st.markdown("<div class='device-wrap'>", unsafe_allow_html=True)
-            st.markdown("<div class='device'>", unsafe_allow_html=True)
-            st.markdown(f"<div class='device-label muted'>Device: {html.escape(device)}</div>", unsafe_allow_html=True)
-            scaled_width = int(dev_w * (scale / 100.0))
-            wrapper_html = f"""
-            <div style="width:{dev_w}px;height:{preview_height}px;overflow:hidden;border-radius:18px">
-              <div style="width:{dev_w}px;height:{preview_height}px;overflow:auto">
-                {preview_html}
-              </div>
-            </div>
-            """
-            frame_html = f"""
-            <div style="transform:scale({scale/100.0});transform-origin:top left;-webkit-transform:scale({scale/100.0});">
-              {wrapper_html}
-            </div>
-            """
-            components.html(frame_html, height=int(preview_height * (scale / 100.0)) + 40, scrolling=True)
-            st.markdown("</div>", unsafe_allow_html=True)
-            st.markdown("</div>", unsafe_allow_html=True)
-        else:
-            st.markdown("<div class='preview-frame'>", unsafe_allow_html=True)
-            components.html(preview_html, height=preview_height, scrolling=True)
-            st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown("<div class='preview-frame'>", unsafe_allow_html=True)
+        # fixed, readable height for preview
+        components.html(preview_html, height=700, scrolling=True)
+        st.markdown("</div>", unsafe_allow_html=True)
     else:
         st.info("No preview yet. Run generation to see an interactive preview.")
     st.markdown("</div>", unsafe_allow_html=True)
 
-# (internal logs kept in _internal_logs; not shown on page)
+# (no visible logs or quick checks shown — internal logs stored in _internal_logs variable)
