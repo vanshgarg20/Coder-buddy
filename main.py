@@ -244,129 +244,123 @@ def looks_like_question_text(s: str) -> bool:
             return True
     return False
 
+# ---------- run logic (REPLACE existing `if run_btn:` block with this) ----------
+preview_html: Optional[str] = None
+answer_text: Optional[str] = None
+_internal_logs = []
+
 if run_btn:
     user_text = (prompt or "").strip()
     if not user_text:
         st.warning("Please enter a prompt or question.")
     else:
+        # init LLM only if user asked for GROQ
         llm = None
         if use_groq:
             try:
                 from langchain_groq import ChatGroq
                 api_key = os.getenv("GROQ_API_KEY")
                 if not api_key:
-                    raise RuntimeError("GROQ_API_KEY not set in env")
-                llm = ChatGroq(model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"), temperature=float(os.getenv("GROQ_TEMPERATURE", "0.2")), api_key=api_key)
+                    raise RuntimeError("GROQ_API_KEY not set in environment")
+                llm = ChatGroq(
+                    model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+                    temperature=float(os.getenv("GROQ_TEMPERATURE", "0.2")),
+                    api_key=api_key
+                )
                 _internal_logs.append("GROQ initialized")
             except Exception as e:
                 llm = None
                 _internal_logs.append("GROQ init failed: " + str(e))
-        else:
-            _internal_logs.append("GROQ not selected; using local/agent fallback")
 
         try:
+            # ---------- ASK (question) mode ----------
             if mode == "Ask (question)":
                 if llm is not None:
-                    final_prompt = f"You are a helpful assistant. Answer concisely.\nUser: {user_text}\n"
-                    raw = call_llm_and_get_text(llm, final_prompt)
-                    answer_text = extract_text_from_llm_output(raw)
-                    _internal_logs.append("Answered with GROQ")
+                    try:
+                        final_prompt = f"You are a helpful assistant. Answer concisely.\nUser: {user_text}\n"
+                        raw = call_llm_and_get_text(llm, final_prompt)
+                        answer_text = extract_text_from_llm_output(raw)
+                        _internal_logs.append("Answered with GROQ")
+                    except Exception as e:
+                        _internal_logs.append("GROQ answer failed: " + str(e))
+                        answer_text = "GROQ error. Try again or disable GROQ to use local/agent fallback."
                 else:
+                    # try agent fallback
                     if agent is not None:
                         try:
                             payload = {"user_prompt": user_text}
                             res = agent.invoke(payload, config={"recursion_limit": 50}) if hasattr(agent, "invoke") else agent(payload)
                             answer_text = extract_text_from_llm_output(res)
-                            _internal_logs.append("Answered with agent")
+                            _internal_logs.append("Answered with agent fallback")
                         except Exception as e:
-                            _internal_logs.append("Agent failed: " + str(e))
-                            answer_text = "No GROQ available. Enable GROQ_API_KEY for live answers, or try Generate app mode."
+                            _internal_logs.append("Agent failed for question: " + str(e))
+                            answer_text = "Agent failed to answer. Enable GROQ or try a different prompt."
                     else:
-                        answer_text = "No GROQ available. Enable GROQ_API_KEY for live answers, or try Generate app mode."
+                        answer_text = "No GROQ and no agent available. Enable GROQ or use Generate mode."
+
+            # ---------- GENERATE (app) mode ----------
             else:
-                # generate app
+                # Priority: GROQ -> agent -> local fallback
+                generated = False
+
+                # 1) Try GROQ if we have it
                 if llm is not None:
                     try:
                         gen_prompt = f"Produce a single self-contained HTML document implementing: {user_text}\nReturn only the HTML document."
                         raw = call_llm_and_get_text(llm, gen_prompt)
                         gen_text = extract_text_from_llm_output(raw)
                         preview_html = clean_preview_html(gen_text)
+                        generated = True
                         _internal_logs.append("Generated app via GROQ")
                     except Exception as e:
                         _internal_logs.append("GROQ generation failed: " + str(e))
-                        # try agent or local
-                        if agent is not None:
-                            try:
-                                payload = {"user_prompt": user_text}
-                                res = agent.invoke(payload, config={"recursion_limit": 200}) if hasattr(agent, "invoke") else agent(payload)
-                                if isinstance(res, dict) and res.get("built_files"):
-                                    raw_bf = res.get("built_files", {})
-                                    normalized = {}
-                                    for p, meta in (raw_bf.items() if isinstance(raw_bf, dict) else []):
-                                        if isinstance(meta, dict) and meta.get("content") is not None:
-                                            normalized[p] = {"content": meta["content"]}
-                                    if normalized:
-                                        if any(k.lower().endswith("index.html") for k in normalized.keys()):
-                                            for k, v in normalized.items():
-                                                if k.lower().endswith("index.html"):
-                                                    preview_html = clean_preview_html(v["content"])
-                                                    break
-                                        else:
-                                            css = "".join(v["content"] for p, v in normalized.items() if p.lower().endswith(".css"))
-                                            js = "".join(v["content"] for p, v in normalized.items() if p.lower().endswith(".js"))
-                                            body = next((v["content"] for p, v in normalized.items() if p.lower().endswith(".html")), "<div>Preview</div>")
-                                            preview_html = f"<!doctype html><html><head><meta charset='utf-8'><style>{css}</style></head><body>{body}<script>{js}</script></body></html>"
-                                        _internal_logs.append("Used agent-built files for preview")
-                                    else:
-                                        preview_html = clean_preview_html(local_custom_generator(user_text))
-                                        _internal_logs.append("Agent returned no in-memory files; used local generator")
+
+                # 2) If not generated yet, try agent if available
+                if not generated and agent is not None:
+                    try:
+                        payload = {"user_prompt": user_text}
+                        res = agent.invoke(payload, config={"recursion_limit": 200}) if hasattr(agent, "invoke") else agent(payload)
+                        # agent may return built_files dict or a raw HTML string
+                        if isinstance(res, dict) and res.get("built_files"):
+                            raw_bf = res.get("built_files", {})
+                            normalized = {}
+                            for p, meta in (raw_bf.items() if isinstance(raw_bf, dict) else []):
+                                if isinstance(meta, dict) and meta.get("content") is not None:
+                                    normalized[p] = {"content": meta["content"]}
+                            # pick index.html if present, else combine css/js/html into single doc
+                            if normalized:
+                                if any(k.lower().endswith("index.html") for k in normalized.keys()):
+                                    for k, v in normalized.items():
+                                        if k.lower().endswith("index.html"):
+                                            preview_html = clean_preview_html(v["content"])
+                                            break
                                 else:
-                                    preview_html = clean_preview_html(local_custom_generator(user_text))
-                                    _internal_logs.append("Agent returned no usable output; used local generator")
-                            except Exception as e2:
-                                _internal_logs.append("Agent fallback error: " + str(e2))
-                                preview_html = clean_preview_html(local_custom_generator(user_text))
+                                    css = "".join(v["content"] for p, v in normalized.items() if p.lower().endswith(".css"))
+                                    js = "".join(v["content"] for p, v in normalized.items() if p.lower().endswith(".js"))
+                                    body = next((v["content"] for p, v in normalized.items() if p.lower().endswith(".html")), "<div>Preview</div>")
+                                    preview_html = f"<!doctype html><html><head><meta charset='utf-8'><style>{css}</style></head><body>{body}<script>{js}</script></body></html>"
+                                generated = True
+                                _internal_logs.append("Used agent-built files for preview")
+                        elif isinstance(res, str):
+                            preview_html = clean_preview_html(res)
+                            generated = True
+                            _internal_logs.append("Agent returned raw HTML string")
                         else:
-                            preview_html = clean_preview_html(local_custom_generator(user_text))
-                            _internal_logs.append("No agent; used local generator")
-                else:
-                    if agent is not None:
-                        try:
-                            payload = {"user_prompt": user_text}
-                            res = agent.invoke(payload, config={"recursion_limit": 200}) if hasattr(agent, "invoke") else agent(payload)
-                            if isinstance(res, dict) and res.get("built_files"):
-                                raw_bf = res.get("built_files", {})
-                                normalized = {}
-                                for p, meta in (raw_bf.items() if isinstance(raw_bf, dict) else []):
-                                    if isinstance(meta, dict) and meta.get("content") is not None:
-                                        normalized[p] = {"content": meta["content"]}
-                                if normalized:
-                                    if any(k.lower().endswith("index.html") for k in normalized.keys()):
-                                        for k, v in normalized.items():
-                                            if k.lower().endswith("index.html"):
-                                                preview_html = clean_preview_html(v["content"]); break
-                                    else:
-                                        css = "".join(v["content"] for p, v in normalized.items() if p.lower().endswith(".css"))
-                                        js = "".join(v["content"] for p, v in normalized.items() if p.lower().endswith(".js"))
-                                        body = next((v["content"] for p, v in normalized.items() if p.lower().endswith(".html")), "<div>Preview</div>")
-                                        preview_html = f"<!doctype html><html><head><meta charset='utf-8'><style>{css}</style></head><body>{body}<script>{js}</script></body></html>"
-                                    _internal_logs.append("Used agent-built files for preview")
-                                else:
-                                    preview_html = clean_preview_html(local_custom_generator(user_text))
-                                    _internal_logs.append("Agent returned no in-memory files; used local generator")
-                            else:
-                                preview_html = clean_preview_html(local_custom_generator(user_text))
-                                _internal_logs.append("Agent returned no usable output; used local generator")
-                        except Exception as e:
-                            _internal_logs.append("Agent failed: " + str(e))
-                            preview_html = clean_preview_html(local_custom_generator(user_text))
-                    else:
-                        preview_html = clean_preview_html(local_custom_generator(user_text))
-                        _internal_logs.append("Generated from prompt locally (no LLM or agent)")
+                            _internal_logs.append("Agent returned no usable built_files")
+                    except Exception as e:
+                        _internal_logs.append("Agent generation failed: " + str(e))
+
+                # 3) Local fallback (always reliable)
+                if not generated:
+                    preview_html = clean_preview_html(local_custom_generator(user_text))
+                    generated = True
+                    _internal_logs.append("Used local generator fallback")
+
         except Exception as e:
-            _internal_logs.append("Unexpected error: " + str(e))
+            _internal_logs.append("Unexpected error in run_btn handler: " + str(e))
             _internal_logs.append(traceback.format_exc())
             preview_html = clean_preview_html(f"<pre>{html.escape(traceback.format_exc())}</pre>")
+
 
 # ---------- render results ----------
 st.markdown("---")
