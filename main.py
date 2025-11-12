@@ -2,19 +2,24 @@
 import os
 import time
 import json
-import traceback
+import traceback as _tb
+import logging
 from typing import Any, Dict, List, Optional
 
 import streamlit as st
 import streamlit.components.v1 as components
 
-# try import agent; if fails, show a helpful error later
+# -------- flexible import: agent.graph (preferred) OR graph.py at repo root --------
+agent = None
+_import_traceback = None
 try:
-    from agent.graph import agent
-except Exception as e:
-    agent = None
-    import logging
-    logging.exception("Failed to import agent.graph")
+    from agent.graph import agent  # if you later move graph.py into agent/, this will work
+except Exception:
+    try:
+        from graph import agent  # fallback: your current layout (graph.py at repo root)
+    except Exception:
+        _import_traceback = _tb.format_exc()
+        logging.exception("Failed to import agent from agent.graph or graph")
 
 # ---------------- helper functions (same invocation compatibility as before) ----------------
 def call_agent(agent_obj: Any, payload: Dict[str, Any], config: Optional[Dict[str, Any]] = None) -> Any:
@@ -35,31 +40,24 @@ def call_agent(agent_obj: Any, payload: Dict[str, Any], config: Optional[Dict[st
 
     # callable(agent_obj)(...)
     if callable(agent_obj):
-        # try with keyword config
         try:
             return agent_obj(payload, config=config)
         except TypeError:
             pass
         except Exception:
             raise
-
-        # try with positional config
         try:
             return agent_obj(payload, config)
         except TypeError:
             pass
         except Exception:
             raise
-
-        # try with only payload
         try:
             return agent_obj(payload)
         except TypeError:
             pass
         except Exception:
             raise
-
-        # try no args
         try:
             return agent_obj()
         except TypeError:
@@ -69,12 +67,11 @@ def call_agent(agent_obj: Any, payload: Dict[str, Any], config: Optional[Dict[st
 
     raise TypeError(
         "agent is not invokable. Expected an object with .invoke(...) or a callable. "
-        "Check agent.graph export."
+        "Check your graph.py export (should define `agent = build_app()` at module level)."
     )
 
 
 def list_recent_files(base_dir: str, since_seconds: int = 300, max_files: int = 50) -> List[Dict[str, str]]:
-    """Return list of files under base_dir modified within since_seconds (most recent first)."""
     cutoff = time.time() - since_seconds
     found: List[tuple[float, str]] = []
     for root, _, files in os.walk(base_dir):
@@ -91,20 +88,16 @@ def list_recent_files(base_dir: str, since_seconds: int = 300, max_files: int = 
 
 
 def to_serializable(obj: Any) -> Any:
-    """Convert objects (including Pydantic BaseModel) to serializable forms."""
     try:
-        # detect pydantic BaseModel without importing it here (duck-typing)
         from pydantic import BaseModel
         if isinstance(obj, BaseModel):
             return to_serializable(obj.model_dump())
     except Exception:
         pass
-
     if isinstance(obj, dict):
         return {str(k): to_serializable(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
         return [to_serializable(v) for v in obj]
-    # primitive or unknown: return as-is
     return obj
 
 
@@ -131,9 +124,14 @@ with col1:
 with col2:
     st.subheader("Agent status")
     if agent is None:
-        st.error("agent.graph.agent is not available (import failed). Check logs and ensure agent/graph.py exports `agent = build_app()` at module level.")
+        st.error(
+            "agent import failed. Looking for `agent` in either `agent/graph.py` or `graph.py`."
+        )
         if st.checkbox("Show import traceback (if any)"):
-            st.text("Check stdout logs of your deployment — import exception printed at startup.")
+            if _import_traceback:
+                st.code(_import_traceback)
+            else:
+                st.write("No traceback captured. Check server logs.")
     else:
         st.success("Agent module imported OK")
         st.write("Agent type:", type(agent))
@@ -141,7 +139,6 @@ with col2:
 st.markdown("---")
 out_col1, out_col2 = st.columns([1, 1])
 
-# area to show logs and output
 with out_col1:
     st.subheader("Logs / Final state")
     logs_area = st.empty()
@@ -154,7 +151,7 @@ with out_col2:
 # run the agent when button clicked
 if run_button:
     if agent is None:
-        st.error("Cannot run — `agent` is not available. Fix import issues in agent/graph.py and redeploy.")
+        st.error("Cannot run — `agent` is not available. Ensure your `graph.py` defines `agent = build_app()`.")
     else:
         payload = {"user_prompt": user_prompt}
         config = {"recursion_limit": recursion_limit}
@@ -163,7 +160,6 @@ if run_button:
             with st.spinner("Running agent — this may take a while depending on LLM..."):
                 result = call_agent(agent, payload, config=config)
 
-            # If agent returned None, list recent files (default output folder `output/`)
             if result is None:
                 base_dir = os.getcwd()
                 recent = list_recent_files(base_dir, since_seconds=60 * 10)
@@ -177,11 +173,9 @@ if run_button:
             else:
                 final_state = {"status": "done", "returned_value": to_serializable(result)}
 
-            # show JSON final state
             logs_area.code(json.dumps(final_state, indent=2, ensure_ascii=False))
             st.success("Agent finished")
 
-            # Show list of files in output/ (if exists) and let user preview
             output_dir = os.path.join(os.getcwd(), "output")
             if os.path.isdir(output_dir):
                 files = []
@@ -194,18 +188,14 @@ if run_button:
                     files_area.write(f"Files written to `{output_dir}`:")
                     for f in sorted(files):
                         st.write("-", f)
-                    # simple preview selector
                     chosen = st.selectbox("Preview a file", ["(none)"] + sorted(files))
                     if chosen and chosen != "(none)":
                         chosen_path = os.path.join(os.getcwd(), chosen)
                         try:
                             text = open(chosen_path, "r", encoding="utf-8").read()
-                            # if it's HTML, render; otherwise show code
                             if chosen.lower().endswith(".html"):
-                                st.markdown("Previewing HTML file (rendered below). If it looks blank, file may be minimal; try viewing source.")
-                                # use components.html to render local HTML
+                                st.markdown("Previewing HTML file (rendered below). If it looks blank, try viewing source.")
                                 components.html(text, height=700, scrolling=True)
-                                # also show source
                                 st.markdown("**Source**")
                                 st.code(text)
                             else:
@@ -218,17 +208,17 @@ if run_button:
             else:
                 files_area.info("No `output/` directory found (agent may write to a different path).")
 
-        except Exception as e:
+        except Exception:
             st.error("Agent execution raised an exception — see traceback below.")
-            st.exception(traceback.format_exc())
+            st.exception(_tb.format_exc())
 
 # helpful footer
 st.markdown("---")
 st.markdown(
     """
     **Notes / tips**
-    - Make sure `agent/graph.py` defines and exports an `agent` at module level, e.g. `agent = build_app()`.
-    - Avoid heavy imports or secret-dependent initialization at top-level of `agent/graph.py` (use lazy init if needed).
-    - On Streamlit Cloud, add any required secrets (GROQ, API keys) in App settings (do NOT commit `.env` to git).
+    - Ensure your `graph.py` (repo root) or `agent/graph.py` defines `agent = build_app()` at module level.
+    - Avoid heavy imports or secret-dependent initialization at top-level of graph code (use lazy init if needed).
+    - On Streamlit Cloud, add required secrets (GROQ, API keys) in App settings (do NOT commit `.env` to git).
     """
 )
