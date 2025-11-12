@@ -60,7 +60,7 @@ st.markdown(
     <div class="hero">
       <div>
         <div class="logo">Coder-buddy <span class="heart">💙</span></div>
-        <div class="tag">Ask a question, or generate a small working web app — preview runs inline, no disk writes by default.</div>
+        <div class="tag">Ask anything, or instantly build and preview full web apps — powered by AI, crafted in real time, right in your browser.</div>
       </div>
       <div class="hero-right">Fast • Modern • Interactive</div>
     </div>
