@@ -1,14 +1,13 @@
-# main.py - Better Custom prompt handling + GROQ integration + modern UI
+# main.py - Coder-buddy: GROQ-enabled Q&A + app generator (single-file)
 import os
-import json
-import traceback
 import html
+import traceback
 from typing import Any, Dict, Optional
 
 import streamlit as st
 import streamlit.components.v1 as components
 
-# Optional agent import (kept as fallback)
+# Optional agent import (fallback)
 try:
     from agent.graph import agent
 except Exception:
@@ -17,53 +16,18 @@ except Exception:
     except Exception:
         agent = None
 
-st.set_page_config(page_title="Coder-buddy — Live Generator (GROQ)", layout="wide")
+st.set_page_config(page_title="Coder-buddy — Live Generator & Assistant", layout="wide")
 
-# ---- small helper: lazy ChatGroq factory ----
-def get_groq_llm():
-    """Return a ChatGroq LLM instance using GROQ_API_KEY env var (lazy import)."""
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
-        raise RuntimeError("GROQ_API_KEY not set in environment")
-    try:
-        from langchain_groq import ChatGroq  # lazy import
-    except Exception as e:
-        raise RuntimeError(f"Missing langchain_groq package: {e}")
-    model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
-    temp = float(os.getenv("GROQ_TEMPERATURE", "0.2"))
-    # pass api_key explicitly to the client
-    return ChatGroq(model=model, temperature=temp, api_key=api_key)
-
-# ---- prompts for LLM usage ----
-ANSWER_PROMPT = """You are a helpful assistant. Answer the user's question concisely and accurately.
-If you are unsure, say you are unsure and provide suggestions to verify online.
-User question:
-{user_prompt}
-"""
-
-HTML_GENERATOR_PROMPT = """You are a web developer assistant. Produce a single self-contained HTML file (including inline CSS and JS)
-that implements the requested web component or small web app described below. Return ONLY the full HTML document (no explanations).
-User request:
-{user_prompt}
-
-Constraints:
-- Output a single HTML document (<!doctype html> ... </html>) that can be saved and opened.
-- Keep it simple, responsive, and working without external dependencies.
-- Avoid external network requests or CDN resources.
-"""
-
-# --- page header / style tweaks (same as before) ---
+# ------------------ UI header ------------------
 st.markdown(
     """
     <style>
-    .header {
-      display:flex; gap:20px; align-items:center; padding:18px;
-      background: linear-gradient(90deg, rgba(11,121,255,0.12), rgba(102,51,255,0.06));
-      border-radius: 12px; box-shadow: 0 6px 20px rgba(15,23,42,0.06);
-    }
+    .header { display:flex; gap:16px; align-items:center; padding:18px;
+      background: linear-gradient(90deg, rgba(11,121,255,0.10), rgba(108,92,231,0.06));
+      border-radius:12px; box-shadow: 0 6px 24px rgba(2,6,23,0.04); }
     .brand { font-weight:700; font-size:20px; color:#0b79ff; }
     .sub { color:#475569; margin-top:4px; }
-    .small { font-size:12px; color:#64748b; }
+    .muted { color:#64748b; font-size:13px; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -72,118 +36,121 @@ st.markdown(
     """
     <div class="header">
       <div>
-        <div class="brand">Coder-buddy</div>
-        <div class="sub">Enter a prompt and generate or ask — preview runs inline.</div>
+        <div class="brand">Coder-buddy 💙</div>
+        <div class="sub">Ask a question or generate a small web app — preview runs inline.</div>
       </div>
-      <div style="margin-left:auto" class="small">No disk writes by default • GROQ-enabled</div>
+      <div style="margin-left:auto" class="muted">No disk writes by default • Use GROQ for live answers</div>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
-# --- inline templates (todo, calc, snake, tic, notes) ---
-# (same functions as before; omitted here to shorten — include your versions)
-# For brevity I re-use the same inline templates from your file:
-def todo_inline_html() -> str:
-    # copy the todo inline template content from your file (unchanged)
-    style = """
-:root{--bg:#f6f8fb;--card:#ffffff;--accent:#0b79ff;--muted:#64748b}
-body{font-family:Inter,Arial,sans-serif;margin:0;background:var(--bg);padding:24px}
-.card{max-width:720px;margin:18px auto;background:var(--card);border-radius:12px;padding:20px;box-shadow:0 8px 30px rgba(15,23,42,0.06)}
-.header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
-.h1{font-size:20px;margin:0;color:#0f172a}
-.controls{display:flex;gap:8px}
-.input{flex:1;padding:10px;border-radius:8px;border:1px solid #e6eef8}
-.btn{background:var(--accent);color:#fff;padding:10px 12px;border-radius:8px;border:none;cursor:pointer}
-.list{margin-top:12px;padding:0;list-style:none}
-.item{display:flex;align-items:center;justify-content:space-between;padding:10px;border-radius:8px;border:1px solid #f1f5f9;margin-bottom:8px}
-.item .left{display:flex;gap:10px;align-items:center}
-.complete{opacity:.6;text-decoration:line-through}
-.small-btn{padding:6px 8px;border-radius:8px;border:none;background:#eef2ff;cursor:pointer}
-"""
-    script = r"""
-const root = document.getElementById('app-root');
-root.innerHTML = `<div class="card"><div class="header"><h2 class="h1">TodoApp</h2></div>
-<div style="display:flex;gap:10px"><input id="task-input" class="input" placeholder="Add a task..."/><button id="add-btn" class="btn">Add</button></div>
-<ul id="list" class="list"></ul></div>`;
-const input = document.getElementById('task-input');
-const addBtn = document.getElementById('add-btn');
-const listEl = document.getElementById('list');
-let tasks = JSON.parse(localStorage.getItem('cb_todos_v2')||'[]');
-function save(){localStorage.setItem('cb_todos_v2', JSON.stringify(tasks))}
-function render(){
-  listEl.innerHTML='';
-  tasks.forEach((t,i)=> {
-    const li = document.createElement('li'); li.className='item';
-    li.innerHTML = `<div class="left"><input type="checkbox" ${t.done?'checked':''} data-i="${i}" /><div style="display:flex;flex-direction:column"><strong>${escapeHtml(t.text)}</strong><small style="color:#64748b">${t.when||''}</small></div></div><div><button class="small-btn" data-del="${i}">Delete</button></div>`;
-    listEl.appendChild(li);
-  });
-  save();
-}
-function escapeHtml(s){ return (s+'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
-addBtn.onclick = ()=>{ const v=input.value.trim(); if(!v) return; tasks.unshift({text:v,done:false,when:new Date().toLocaleString()}); input.value=''; render(); }
-listEl.onclick = (e)=>{ const t=e.target; if(t.dataset.i!==undefined){ const i=Number(t.dataset.i); tasks[i].done=!tasks[i].done; render(); } else if(t.dataset.del!==undefined){ tasks.splice(Number(t.dataset.del),1); render(); } };
-render();
-"""
-    return f"<!doctype html><html><head><meta charset='utf-8' /><meta name='viewport' content='width=device-width,initial-scale=1' /><style>{style}</style></head><body><div id='app-root'></div><script>{script}</script></body></html>"
+# ------------------ helper: LLM factory + caller ------------------
+def get_groq_llm():
+    """Lazily create a ChatGroq instance using GROQ_API_KEY env var."""
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        raise RuntimeError("GROQ_API_KEY not set in environment")
+    try:
+        # lazy import to avoid import errors when package missing
+        from langchain_groq import ChatGroq
+    except Exception as e:
+        raise RuntimeError(f"langchain_groq not available: {e}")
+    model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    temperature = float(os.getenv("GROQ_TEMPERATURE", "0.2"))
+    # try to construct; some client versions will pick key from env, some accept api_key param
+    try:
+        return ChatGroq(model=model, temperature=temperature, api_key=api_key)
+    except TypeError:
+        # older/newer API might ignore api_key param; rely on env var and construct without param
+        return ChatGroq(model=model, temperature=temperature)
 
-def calc_inline_html() -> str:
-    style = """
-:root{--bg:#f3f6ff;--card:#fff;--accent:#6c5ce7}
-body{margin:0;font-family:Inter,Arial,sans-serif;background:var(--bg);display:flex;align-items:center;justify-content:center;height:100vh}
-.calc-card{width:340px;background:var(--card);padding:18px;border-radius:14px;box-shadow:0 12px 40px rgba(12,15,35,0.07)}
-#display{width:100%;height:54px;border-radius:10px;border:1px solid #eef2ff;margin-bottom:12px;padding:10px;font-size:20px;text-align:right}
-.keys{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
-.key{padding:14px;border-radius:10px;border:none;background:#f6f7fb;font-size:16px;cursor:pointer}
-.key.op{background:linear-gradient(90deg,#6c5ce7,#0b79ff);color:white}
-"""
-    script = r"""
-const root = document.getElementById('app-root');
-root.innerHTML = `<div class="calc-card"><input id="display" disabled /><div id="keys" class="keys"></div></div>`;
-const display = document.getElementById('display');
-const keysEl = document.getElementById('keys');
-const keys = ['7','8','9','/','4','5','6','*','1','2','3','-','0','.','=','+'];
-let expr = '';
-function render(){ display.value = expr; }
-keys.forEach(k => {
-  const b = document.createElement('button');
-  b.className = 'key' + (['/','*','-','+','='].includes(k) ? ' op' : '');
-  b.textContent = k;
-  b.onclick = () => {
-    if(k === '='){ try{ expr = String(eval(expr)); } catch(e){ expr = 'Error' } }
-    else { expr += k; }
-    render();
-  };
-  keysEl.appendChild(b);
-});
-render();
-"""
-    return f"<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1' /><style>{style}</style></head><body><div id='app-root'></div><script>{script}</script></body></html>"
+def call_llm_and_get_text(llm, prompt: str) -> str:
+    """Try several common invocation styles and return a text answer (best-effort)."""
+    if llm is None:
+        raise RuntimeError("LLM is None")
+    errors = []
+    # 1) .invoke(prompt)
+    try:
+        if hasattr(llm, "invoke"):
+            out = llm.invoke(prompt)
+            # if returns dict-like or object, try to extract
+            if isinstance(out, str):
+                return out
+            if isinstance(out, dict):
+                # common field names
+                for k in ("text", "output", "answer"):
+                    if k in out:
+                        return str(out[k])
+                return str(out)
+            return str(out)
+    except Exception as e:
+        errors.append(f"invoke failed: {e}")
+    # 2) direct call llm(prompt)
+    try:
+        out = llm(prompt)
+        if isinstance(out, str):
+            return out
+        if isinstance(out, dict):
+            for k in ("text", "output", "answer"):
+                if k in out:
+                    return str(out[k])
+            return str(out)
+        return str(out)
+    except Exception as e:
+        errors.append(f"call failed: {e}")
+    # 3) .generate([prompt]) -> check .generations structure
+    try:
+        if hasattr(llm, "generate"):
+            gen = llm.generate([prompt])
+            # Attempt to extract textual generation (depends on library)
+            if hasattr(gen, "generations"):
+                gens = getattr(gen, "generations")
+                if gens and len(gens[0]) > 0:
+                    first = gens[0][0]
+                    if hasattr(first, "text"):
+                        return first.text
+                    return str(first)
+            # fallback convert to string
+            return str(gen)
+    except Exception as e:
+        errors.append(f"generate failed: {e}")
+    # nothing worked — return combined errors
+    raise RuntimeError("LLM invocation failed. Attempts:\n" + "\n".join(errors))
 
-def snake_game_html() -> str:
-    # copy snake template from earlier
-    style = """
-:root{--bg:#f7fafc}
-body{margin:0;font-family:Inter,Arial,sans-serif;background:var(--bg);display:flex;align-items:center;justify-content:center;height:100vh}
-.card{background:#fff;padding:18px;border-radius:12px;box-shadow:0 10px 40px rgba(2,6,23,0.06)}
-canvas{background:#0f172a;border-radius:8px;display:block}
-.info{margin-top:10px;color:#475569;text-align:center}
-.btn{margin-top:8px;padding:8px 12px;border-radius:8px;border:none;background:linear-gradient(90deg,#0b79ff,#6c5ce7);color:white;cursor:pointer}
-"""
-    script = r"""/* snake script omitted here for brevity; use your previous snake_game_html content */"""
-    return f"<!doctype html><html><head><meta charset='utf-8' /><meta name='viewport' content='width=device-width,initial-scale=1' /><style>{style}</style></head><body><div id='app-root'></div><script>{script}</script></body></html>"
+# ------------------ inline app templates ------------------
+# (todo, calc, snake, tic-tac-toe, notes) - inline HTML strings
+def todo_inline_html():
+    # same as before - minimal fresh inline todo
+    return """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+body{font-family:Arial;background:#f6f8fb;padding:24px} .card{max-width:720px;margin:18px auto;background:#fff;padding:16px;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,0.05)} .input{width:70%;padding:8px;border-radius:8px;border:1px solid #e6eef8} .btn{padding:8px 12px;border-radius:8px;border:none;background:#0b79ff;color:#fff} .list{margin-top:12px}
+</style></head><body><div class="card"><h3>Todo</h3><div><input id="t" class="input" placeholder="Add task"><button id="a" class="btn">Add</button></div><ul id="l" class="list"></ul></div><script>
+const l=localStorage.getItem('cb_todos')?JSON.parse(localStorage.getItem('cb_todos')):[];function r(){const el=document.getElementById('l');el.innerHTML='';l.forEach((t,i)=>{const li=document.createElement('li');li.innerText=t;li.onclick=()=>{l.splice(i,1);localStorage.setItem('cb_todos',JSON.stringify(l));r()};el.appendChild(li)})}document.getElementById('a').onclick=()=>{const v=document.getElementById('t').value.trim();if(!v) return; l.unshift(v); localStorage.setItem('cb_todos',JSON.stringify(l)); document.getElementById('t').value=''; r()};r();
+</script></body></html>"""
 
-def tic_tac_toe_html() -> str:
-    # copy tic tac toe template from earlier
-    style = """body{font-family:Inter,Arial,sans-serif;background:#f6f9fc;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}"""
-    script = r"""/* tic tac toe script omitted here for brevity; use your previous tic_tac_toe_html content */"""
-    return f"<!doctype html><html><head><meta charset='utf-8' /><meta name='viewport' content='width=device-width,initial-scale=1' /><style>{style}</style></head><body><div id='app-root'></div><script>{script}</script></body></html>"
+def calc_inline_html():
+    return """<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><style>body{font-family:Arial;display:flex;height:100vh;align-items:center;justify-content:center;background:#eef2f7}.card{background:#fff;padding:16px;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,0.05)} #d{width:220px;height:44px;font-size:20px;text-align:right;padding:6px;margin-bottom:8px}</style></head><body><div class='card'><input id='d' disabled /><div id='k'></div></div><script>const keys=['7','8','9','/','4','5','6','*','1','2','3','-','0','.','=','+'];const k=document.getElementById('k'),d=document.getElementById('d');keys.forEach(t=>{const b=document.createElement('button');b.innerText=t;b.style.margin='4px';b.onclick=()=>{if(t==='='){try{d.value=eval(d.value)}catch(e){d.value='Error'}}else d.value+=t};k.appendChild(b)});</script></body></html>"""
 
+def snake_game_html():
+    # a playable snake game (kept concise)
+    return """<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><style>body{margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#f7fafc}.card{padding:12px;background:#fff;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,0.05)}canvas{background:#071024;border-radius:8px}</style></head><body><div class='card'><h4>Snake (arrows)</h4><canvas id='c' width='360' height='360'></canvas><div>Score: <span id='s'>0</span></div><button id='r'>Restart</button></div><script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');const cell=18;const cols=c.width/cell,rows=c.height/cell;let snake=[],dir={x:1,y:0},food,score=0,alive=true;function rnd(a,b){return Math.floor(Math.random()*(b-a))+a}function place(){food={x:rnd(0,cols),y:rnd(0,rows)}}function reset(){snake=[{x:Math.floor(cols/2),y:Math.floor(rows/2)}];dir={x:1,y:0};place();score=0;alive=true;document.getElementById('s').innerText=score}document.addEventListener('keydown',e=>{if(e.key.includes('Arrow')){if(e.key==='ArrowUp'&&dir.y==0)dir={x:0,y:-1};if(e.key==='ArrowDown'&&dir.y==0)dir={x:0,y:1};if(e.key==='ArrowLeft'&&dir.x==0)dir={x:-1,y:0};if(e.key==='ArrowRight'&&dir.x==0)dir={x:1,y:0}}});document.getElementById('r').onclick=reset;function tick(){if(!alive)return;const head={x:snake[0].x+dir.x,y:snake[0].y+dir.y};if(head.x<0)head.x=cols-1;if(head.y<0)head.y=rows-1;if(head.x>=cols)head.x=0;if(head.y>=rows)head.y=0;for(let s of snake)if(s.x===head.x&&s.y===head.y){alive=false;return}snake.unshift(head);if(head.x===food.x&&head.y===food.y){score++;document.getElementById('s').innerText=score;place()}else snake.pop()}function draw(){ctx.fillStyle='#071024';ctx.fillRect(0,0,c.width,c.height);ctx.fillStyle='#ff6b6b';ctx.fillRect(food.x*cell+2,food.y*cell+2,cell-4,cell-4);for(let i=0;i<snake.length;i++){ctx.fillStyle=i==0? '#6c5ce7':'#9aa7ff';ctx.fillRect(snake[i].x*cell+1,snake[i].y*cell+1,cell-2,cell-2)}if(!alive){ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,0,c.width,c.height);ctx.fillStyle='#fff';ctx.font='18px Arial';ctx.textAlign='center';ctx.fillText('Game Over — Restart',c.width/2,c.height/2)}}reset();let last=0;function loop(t){if(t-last>120){tick();last=t}draw();requestAnimationFrame(loop)}requestAnimationFrame(loop);
+</script></body></html>"""
+
+def tic_tac_toe_html():
+    return """<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><style>body{font-family:Arial;display:flex;height:100vh;align-items:center;justify-content:center;background:#f6f9fc}.card{padding:12px;background:#fff;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,0.05)} .b{display:grid;grid-template-columns:repeat(3,80px);gap:6px}.c{width:80px;height:80px;background:#f8fafc;display:flex;align-items:center;justify-content:center;font-size:28px;cursor:pointer;border-radius:8px}</style></head><body><div class='card'><h4>Tic Tac Toe</h4><div id='b' class='b'></div><div id='s'></div><button id='r'>Restart</button></div><script>
+const b=document.getElementById('b'),s=document.getElementById('s');let cells=Array(9).fill(null),turn='X';function check(){const wins=[[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];for(const w of wins){const[a,b,c]=w; if(cells[a]&&cells[a]===cells[b]&&cells[b]===cells[c]) return cells[a]} if(cells.every(Boolean)) return 'Draw'; return null}function render(){b.innerHTML='';cells.forEach((v,i)=>{const el=document.createElement('div');el.className='c';el.textContent=v||'';el.onclick=()=>{ if(cells[i]||check()) return; cells[i]=turn; turn=turn==='X'?'O':'X'; render() }; b.appendChild(el)}); const w=check(); s.innerText=w? (w==='Draw'?'Draw!':w+' wins!') : 'Turn: '+turn }document.getElementById('r').onclick=()=>{cells=Array(9).fill(null);turn='X';render()};render();
+</script></body></html>"""
+
+# Notes generator (local) used by fallback
 def notes_inline_html():
-    # will be created by local_custom_generator when needed; kept out here
-    return ""
+    # kept concise; local_custom_generator uses more featureful version
+    return local_notes_html_small()
 
-# combine_files_to_html (same as before)
+def local_notes_html_small():
+    return """<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><style>body{font-family:Arial;background:#f6f8fb;padding:24px}.card{max-width:900px;margin:0 auto;background:#fff;padding:12px;border-radius:12px}.note{padding:8px;border-bottom:1px solid #eee}</style></head><body><div class='card'><h3>Notes</h3><input id='t' placeholder='title'><br><textarea id='b' placeholder='body'></textarea><br><button id='s'>Save</button><div id='list'></div></div><script>const key='cb_notes_sm';let arr=JSON.parse(localStorage.getItem(key)||'[]');function r(){const el=document.getElementById('list');el.innerHTML='';arr.forEach(a=>{const d=document.createElement('div');d.className='note';d.innerHTML='<b>'+a.t+'</b><div>'+a.b+'</div>';el.appendChild(d)})}document.getElementById('s').onclick=()=>{arr.unshift({t:document.getElementById('t').value,b:document.getElementById('b').value});localStorage.setItem(key,JSON.stringify(arr));document.getElementById('t').value='';document.getElementById('b').value='';r()};r();</script></body></html>"""
+
+# combine files helper (used when agent returns in-memory files)
 def combine_files_to_html(built_files: Dict[str, Dict[str, Any]]) -> str:
     html_content = None
     css_parts = []
@@ -215,144 +182,37 @@ def combine_files_to_html(built_files: Dict[str, Dict[str, Any]]) -> str:
         out = out + body_insert
     return out
 
-# local_custom_generator (improved notes + games + fallback)
+# ------------------ smart local generator ------------------
 def local_custom_generator(prompt: str) -> str:
     p = (prompt or "").strip().lower()
-    if any(k in p for k in ["note", "notes", "note-taking", "notes maker", "notes app"]):
-        # use the notes builder script from previous reply (omitted here for brevity)
-        # we will construct a simple notes app inline:
-        css = """
-:root{--bg:#f6f8fb;--card:#fff;--accent:#6c5ce7}
-body{margin:0;font-family:Inter, Arial, sans-serif;background:var(--bg);padding:28px}
-.container{max-width:960px;margin:0 auto}
-.header{display:flex;align-items:center;justify-content:space-between;gap:12px}
-.title{font-size:20px;color:#0f172a;margin:0}
-.input{flex:1;padding:10px;border-radius:10px;border:1px solid #e6eef8}
-.btn{background:linear-gradient(90deg,#0b79ff,#6c5ce7);color:#fff;padding:10px 14px;border-radius:10px;border:none;cursor:pointer}
-.grid{display:grid;grid-template-columns:1fr 340px;gap:18px;margin-top:18px}
-.card{background:var(--card);padding:12px;border-radius:10px;box-shadow:0 8px 30px rgba(2,6,23,0.04);border:1px solid #f1f5f9}
-textarea.note-area{width:100%;height:120px;border-radius:8px;padding:10px;border:1px solid #e6eef8}
-"""
-        script = r"""
-const root = document.getElementById('app-root');
-root.innerHTML = `<div class="container"><div class="header"><div><h2 class="title">Notes</h2><div class="small">Simple notes — stored in your browser (localStorage)</div></div></div>
-<div class="grid"><div>
-  <div class="card"><div style="display:flex;gap:8px;align-items:center"><input id="filter" class="search" placeholder="Search notes..."/></div>
-    <div id="notes-list" style="margin-top:12px"></div></div>
-</div>
-<div>
-  <div class="card">
-    <div style="display:flex;gap:8px;margin-bottom:10px">
-      <input id="title" class="input" placeholder="Note title" />
-      <button id="save" class="btn">Save</button>
-    </div>
-    <textarea id="body" class="note-area" placeholder="Write your note..."></textarea>
-    <div style="display:flex;gap:8px;margin-top:10px">
-      <button id="clear-all" class="opt-btn">Clear all</button>
-      <div style="flex:1"></div>
-      <div class="small">Notes are stored locally only.</div>
-    </div>
-  </div>
-</div></div></div>`;
-const notesKey = 'cb_notes_v1';
-let notes = JSON.parse(localStorage.getItem(notesKey) || '[]');
-function saveNotes(){ localStorage.setItem(notesKey, JSON.stringify(notes)); }
-function uid(){ return Math.random().toString(36).slice(2,9); }
-function formatDate(ts){ const d = new Date(ts); return d.toLocaleString(); }
-function renderList(filterText=''){
-  const list = document.getElementById('notes-list');
-  list.innerHTML = '';
-  const filtered = notes.filter(n => (n.title + ' ' + n.body).toLowerCase().includes(filterText.toLowerCase()));
-  if(filtered.length===0){ list.innerHTML = '<div class="small">No notes yet.</div>'; return; }
-  filtered.forEach(n => {
-    const el = document.createElement('div');
-    el.className = 'list-item';
-    el.innerHTML = `<div style="flex:1"><strong>${escapeHtml(n.title||'(untitled)')}</strong><div class="small">${escapeHtml(n.body.slice(0,120))}</div><div class="note-meta">${formatDate(n.ts)}</div></div>
-      <div style="display:flex;flex-direction:column;gap:6px">
-        <button class="opt-btn" data-edit="${n.id}">Edit</button>
-        <button class="opt-btn" data-del="${n.id}">Delete</button>
-      </div>`;
-    list.appendChild(el);
-  });
-}
-function escapeHtml(s){ return (s||'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
-document.getElementById('save').onclick = ()=>{
-  const title = document.getElementById('title').value.trim();
-  const body = document.getElementById('body').value.trim();
-  if(!body && !title) return;
-  const editingId = document.getElementById('save').dataset.editing;
-  if(editingId){
-    const idx = notes.findIndex(x=>x.id===editingId);
-    if(idx>=0){ notes[idx].title = title; notes[idx].body = body; notes[idx].ts = Date.now(); }
-    delete document.getElementById('save').dataset.editing;
-  } else {
-    notes.unshift({id: uid(), title, body, ts: Date.now()});
-  }
-  saveNotes(); document.getElementById('title').value=''; document.getElementById('body').value=''; renderList(document.getElementById('filter').value);
-};
-document.getElementById('filter').oninput = (e)=> renderList(e.target.value);
-document.getElementById('notes-list').onclick = (e)=>{
-  const d = e.target;
-  const edit = d.closest('button[data-edit]');
-  const del = d.closest('button[data-del]');
-  if(edit){
-    const id = edit.dataset.edit;
-    const note = notes.find(x=>x.id===id);
-    if(note){ document.getElementById('title').value = note.title; document.getElementById('body').value = note.body; document.getElementById('save').dataset.editing = id; window.scrollTo({top:0,behavior:'smooth'}); }
-  } else if(del){
-    const id = del.dataset.del;
-    notes = notes.filter(x=>x.id!==id);
-    saveNotes(); renderList(document.getElementById('filter').value);
-  }
-};
-document.getElementById('clear-all').onclick = ()=>{ if(confirm('Clear all notes?')){ notes=[]; saveNotes(); renderList(''); } };
-renderList('');
-"""
-        return f"<!doctype html><html><head><meta charset='utf-8' /><meta name='viewport' content='width=device-width,initial-scale=1' /><style>{css}</style></head><body><div id='app-root'></div><script>{script}</script></body></html>"
-
+    if any(k in p for k in ["note", "notes", "note-taking", "notes app", "notes maker"]):
+        # better notes UI (from earlier helper)
+        return """<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><style>body{font-family:Inter,Arial,sans-serif;background:#f6f8fb;padding:28px}.card{max-width:960px;margin:0 auto;background:#fff;padding:16px;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,0.04)} .input{width:100%;padding:8px;border-radius:8px;border:1px solid #eef2ff} .note{padding:8px;border-bottom:1px solid #f1f5f9}</style></head><body><div class='card'><h3>Notes</h3><input id='t' class='input' placeholder='Title'><br><textarea id='b' class='input' style='height:120px;margin-top:8px' placeholder='Write your note...'></textarea><br><button id='s' style='margin-top:8px;padding:8px 10px;border-radius:8px;background:linear-gradient(90deg,#0b79ff,#6c5ce7);color:#fff;border:none'>Save</button><div id='list' style='margin-top:12px'></div></div><script>const K='cb_notes_v2';let arr=JSON.parse(localStorage.getItem(K)||'[]');function r(){const L=document.getElementById('list');L.innerHTML='';arr.forEach(a=>{const d=document.createElement('div');d.className='note';d.innerHTML='<b>'+a.t+'</b><div>'+a.b+'</div>';L.appendChild(d)})}document.getElementById('s').onclick=()=>{arr.unshift({t:document.getElementById('t').value,b:document.getElementById('b').value});localStorage.setItem(K,JSON.stringify(arr));document.getElementById('t').value='';document.getElementById('b').value='';r()};r();</script></body></html>"""
     if "snake" in p:
         return snake_game_html()
     if "tic" in p and "toe" in p:
         return tic_tac_toe_html()
-    if "calculator" in p or "calc" in p:
+    if any(k in p for k in ["calc", "calculator", "+", "-", "*", "/"]):
         return calc_inline_html()
-    if "todo" in p or "task" in p:
+    if any(k in p for k in ["todo", "task", "todo list"]):
         return todo_inline_html()
-
+    # default scaffold
     safe = html.escape(prompt or "Generated App")
-    css = """
-body{font-family:Inter,Arial,sans-serif;background:linear-gradient(180deg,#f8fafc,#fff);padding:28px}
-.wrapper{max-width:900px;margin:0 auto}
-.card{background:#fff;padding:20px;border-radius:12px;box-shadow:0 12px 30px rgba(2,6,23,0.06)}
-header{display:flex;align-items:center;justify-content:space-between}
-h1{margin:0;font-size:20px;color:#0f172a}
-.desc{color:#475569;margin-top:8px}
-.preview{margin-top:18px;padding:12px;border-radius:8px;border:1px solid #eef2ff;background:#fbfdff}
-.btn{padding:8px 12px;border-radius:8px;border:none;background:linear-gradient(90deg,#0b79ff,#6c5ce7);color:#fff;cursor:pointer}
-"""
-    script = f"""
-function esc(s){{return s.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')}} 
-document.addEventListener('DOMContentLoaded',()=>{{
-  const root=document.getElementById('app-root');
-  root.innerHTML=`<div class="wrapper"><div class="card"><header><h1>{html.escape(prompt or 'Generated App')}</h1></header><p class="desc">This is a scaffold generated from: <strong>{html.escape(prompt or '')}</strong></p><div class="preview"><button class="btn" id="demo">Click demo</button><div id="out" style="margin-top:12px"></div></div></div></div>`;
-  document.getElementById('demo').onclick = ()=> document.getElementById('out').innerText = 'Interactive demo for: {html.escape(prompt or "")}';
-}});
-"""
-    return f"<!doctype html><html><head><meta charset='utf-8' /><meta name='viewport' content='width=device-width,initial-scale=1' /><style>{css}</style></head><body><div id='app-root'></div><script>{script}</script></body></html>"
+    return f"<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><style>body{{font-family:Inter,Arial,sans-serif;background:#fff;padding:28px}}.card{{max-width:900px;margin:0 auto;padding:18px;border-radius:12px;box-shadow:0 12px 30px rgba(0,0,0,0.04)}}.btn{{padding:8px 12px;border-radius:8px;border:none;background:linear-gradient(90deg,#0b79ff,#6c5ce7);color:#fff}}</style></head><body><div class='card'><h2>{safe}</h2><p>This is a lightweight scaffold generated from your prompt.</p><button class='btn' id='d'>Run demo</button><div id='out' style='margin-top:12px'></div></div><script>document.getElementById('d').onclick=()=>document.getElementById('out').innerText='Demo for: {html.escape(prompt or "")}';</script></body></html>"
 
-# ---- UI form ----
+# ------------------ UI form ------------------
 with st.form("gen", clear_on_submit=False):
-    st.subheader("Enter your prompt")
-    template = st.selectbox("Template", ["Todo app", "Calculator app", "Custom"])
-    prompt = st.text_area("Prompt (leave empty to use template defaults)", value="", height=110, placeholder="e.g. Build a simple note-taking app with tags and search")
-    use_agent_for_custom = st.checkbox("Use agent for Custom (if available, prefers GROQ LLM)", value=False)
-    submit = st.form_submit_button("Generate", help="Generate and render the app inline")
+    st.subheader("Enter your prompt or question")
+    template = st.selectbox("Mode", ["Ask (question)", "Generate app (build)"])
+    prompt = st.text_area("Prompt / Question", value="", height=120, placeholder="e.g. create a snake game OR how does map() work in Python?")
+    use_groq = st.checkbox("Use GROQ LLM (requires GROQ_API_KEY env var)", value=bool(os.getenv("GROQ_API_KEY")))
+    submit = st.form_submit_button("Run")
 
 preview_html: Optional[str] = None
 logs = []
+answer_text: Optional[str] = None
 
-# small heuristic: check if a prompt seems like a question
-def looks_like_question(s: str) -> bool:
+def looks_like_question_text(s: str) -> bool:
     s = (s or "").strip().lower()
     if not s:
         return False
@@ -363,139 +223,156 @@ def looks_like_question(s: str) -> bool:
             return True
     return False
 
+# ------------------ run logic ------------------
 if submit:
-    try:
-        if template == "Todo app":
-            preview_html = todo_inline_html()
-            logs.append("Generated Todo app locally (inline).")
-        elif template == "Calculator app":
-            preview_html = calc_inline_html()
-            logs.append("Generated Calculator locally (inline).")
-        else:  # Custom
-            if use_agent_for_custom:
-                # prefer GROQ LLM if available
+    user_text = (prompt or "").strip()
+    if not user_text:
+        st.warning("Please enter a prompt or question.")
+    else:
+        if use_groq:
+            # initialize LLM
+            try:
+                llm = get_groq_llm()
+                logs.append("GROQ LLM initialized.")
+            except Exception as e:
                 llm = None
-                try:
-                    llm = get_groq_llm()
-                    logs.append("GROQ LLM initialized.")
-                except Exception as e:
-                    logs.append("GROQ init failed: " + str(e))
-                    llm = None
+                logs.append("GROQ init failed: " + str(e))
+        else:
+            llm = None
+            logs.append("GROQ not selected; using local generator/agent fallback.")
 
-                if llm is not None:
-                    user_text = prompt or "Create a small web app"
-                    try:
-                        if looks_like_question(user_text):
-                            # ask LLM to answer
-                            final_prompt = ANSWER_PROMPT.format(user_prompt=user_text)
-                            if hasattr(llm, "invoke"):
-                                ans = llm.invoke(final_prompt)
-                            else:
-                                ans = llm(final_prompt)
-                            # normalize
-                            answer_text = ans if isinstance(ans, str) else str(ans)
-                            preview_html = "<!doctype html><html><body style='font-family:Inter,Arial,sans-serif;padding:20px'><div>" + html.escape(answer_text) + "</div></body></html>"
-                            logs.append("Answered via GROQ LLM.")
-                        else:
-                            # ask LLM to generate a single HTML doc
-                            final_prompt = HTML_GENERATOR_PROMPT.format(user_prompt=user_text)
-                            if hasattr(llm, "invoke"):
-                                gen = llm.invoke(final_prompt)
-                            else:
-                                gen = llm(final_prompt)
-                            gen_text = gen if isinstance(gen, str) else str(gen)
-                            if "<!doctype" in gen_text.lower() or "<html" in gen_text.lower():
-                                preview_html = gen_text
-                            else:
-                                preview_html = "<!doctype html><html><body><pre>" + html.escape(gen_text) + "</pre></body></html>"
-                            logs.append("Generated HTML via GROQ LLM.")
-                    except Exception as e:
-                        logs.append("GROQ call failed: " + str(e))
-                        logs.append("Falling back to agent/local generator.")
-                        # fallback to agent (if exists) then local
-                        if agent is not None:
-                            try:
-                                payload = {"user_prompt": prompt or "Create a small web app"}
-                                cfg = {"recursion_limit": 200}
-                                if hasattr(agent, "invoke"):
-                                    result = agent.invoke(payload, config=cfg)
-                                elif callable(agent):
-                                    result = agent(payload, config=cfg)
-                                else:
-                                    result = None
-                                if isinstance(result, dict) and result.get("built_files"):
-                                    raw = result.get("built_files", {})
-                                    normalized = {}
-                                    for p, meta in (raw.items() if isinstance(raw, dict) else []):
-                                        if isinstance(meta, dict) and meta.get("content") is not None:
-                                            normalized[p] = {"written": False, "content": meta["content"]}
-                                    if normalized:
-                                        preview_html = combine_files_to_html(normalized)
-                                        logs.append("Used agent output for preview.")
-                                    else:
-                                        preview_html = local_custom_generator(prompt)
-                                        logs.append("Agent did not produce in-memory files; used local generator.")
-                                else:
-                                    preview_html = local_custom_generator(prompt)
-                                    logs.append("Agent returned no usable built_files; used local generator.")
-                            except Exception as e2:
-                                logs.append("Agent fallback failed: " + str(e2))
-                                preview_html = local_custom_generator(prompt)
-                        else:
-                            preview_html = local_custom_generator(prompt)
-                else:
-                    # no LLM, try agent fallback
+        # Decide action:
+        # If Mode == Ask (question) -> prefer LLM answer; else if Generate -> produce HTML
+        if template == "Ask (question)":
+            # try to answer using LLM if available
+            if llm is not None:
+                try:
+                    final_prompt = f"You are a helpful assistant. Answer concisely.\nUser: {user_text}\n"
+                    raw = call_llm_and_get_text(llm, final_prompt)
+                    answer_text = str(raw).strip()
+                    logs.append("Answered using GROQ LLM.")
+                except Exception as e:
+                    logs.append("LLM answer failed: " + str(e))
+                    logs.append("Falling back to agent/local.")
+                    # fallback: try agent if available (agent may not answer text, but try)
                     if agent is not None:
                         try:
-                            payload = {"user_prompt": prompt or "Create a small web app"}
-                            cfg = {"recursion_limit": 200}
-                            if hasattr(agent, "invoke"):
-                                result = agent.invoke(payload, config=cfg)
-                            elif callable(agent):
-                                result = agent(payload, config=cfg)
-                            else:
-                                result = None
-                            if isinstance(result, dict) and result.get("built_files"):
-                                raw = result.get("built_files", {})
+                            payload = {"user_prompt": user_text}
+                            res = agent.invoke(payload, config={"recursion_limit": 50}) if hasattr(agent, "invoke") else agent(payload)
+                            answer_text = str(res)
+                            logs.append("Agent provided fallback response.")
+                        except Exception as e2:
+                            logs.append("Agent fallback failed: " + str(e2))
+                            answer_text = "Sorry — I couldn't fetch a live answer. Try enabling GROQ or check logs."
+                    else:
+                        answer_text = "GROQ not available and no agent fallback. Enable GROQ_API_KEY or check agent."
+            else:
+                # no GROQ -> try agent -> else show local helper
+                if agent is not None:
+                    try:
+                        payload = {"user_prompt": user_text}
+                        res = agent.invoke(payload, config={"recursion_limit": 50}) if hasattr(agent, "invoke") else agent(payload)
+                        answer_text = str(res)
+                        logs.append("Answer from local agent.")
+                    except Exception as e:
+                        logs.append("Agent failed: " + str(e))
+                        answer_text = "No GROQ and agent failed. Try enabling GROQ_API_KEY."
+                else:
+                    # local quick heuristic: if question about templates / code, give simple canned help
+                    if "how" in user_text.lower() or "what" in user_text.lower() or "explain" in user_text.lower():
+                        answer_text = "I don't have GROQ enabled. Enable GROQ_API_KEY to get live LLM answers. Meanwhile, ask about generating apps (choose 'Generate app') or use local templates."
+                    else:
+                        answer_text = "No LLM available. Enable GROQ_API_KEY for live answers."
+
+        else:  # Generate app (build)
+            # If GROQ available, ask it to produce a single HTML doc (preferred)
+            if llm is not None:
+                try:
+                    gen_prompt = f"Produce a single self-contained HTML document implementing: {user_text}\nReturn only the HTML document."
+                    raw = call_llm_and_get_text(llm, gen_prompt)
+                    raw = str(raw).strip()
+                    # If model returned non-HTML, we will try to wrap it, else show as HTML
+                    if ("<html" in raw.lower()) or raw.lower().startswith("<!doctype"):
+                        preview_html = raw
+                    else:
+                        # wrap plain output into a pre block so user sees it
+                        preview_html = "<!doctype html><html><body style='font-family:Inter,Arial,sans-serif;padding:20px'><pre>" + html.escape(raw) + "</pre></body></html>"
+                    logs.append("Generated app via GROQ LLM.")
+                except Exception as e:
+                    logs.append("GROQ generation failed: " + str(e))
+                    logs.append("Falling back to agent/local generator.")
+                    # fallback chain: agent -> local generator
+                    try:
+                        if agent is not None:
+                            payload = {"user_prompt": user_text}
+                            res = agent.invoke(payload, config={"recursion_limit": 200}) if hasattr(agent, "invoke") else agent(payload)
+                            if isinstance(res, dict) and res.get("built_files"):
+                                raw_bf = res.get("built_files", {})
                                 normalized = {}
-                                for p, meta in (raw.items() if isinstance(raw, dict) else []):
+                                for p, meta in (raw_bf.items() if isinstance(raw_bf, dict) else []):
                                     if isinstance(meta, dict) and meta.get("content") is not None:
                                         normalized[p] = {"written": False, "content": meta["content"]}
                                 if normalized:
                                     preview_html = combine_files_to_html(normalized)
-                                    logs.append("Used agent output for preview.")
+                                    logs.append("Used agent-built files for preview.")
                                 else:
-                                    preview_html = local_custom_generator(prompt)
+                                    preview_html = local_custom_generator(user_text)
                                     logs.append("Agent returned no in-memory files; used local generator.")
                             else:
-                                preview_html = local_custom_generator(prompt)
-                                logs.append("Agent returned no usable built_files; used local generator.")
-                        except Exception as e:
-                            logs.append("Agent call failed: " + str(e))
-                            preview_html = local_custom_generator(prompt)
-                    else:
-                        preview_html = local_custom_generator(prompt)
-                        logs.append("Generated from prompt locally (no LLM or agent).")
+                                preview_html = local_custom_generator(user_text)
+                                logs.append("Agent returned no usable output; used local generator.")
+                        else:
+                            preview_html = local_custom_generator(user_text)
+                            logs.append("No agent; used local generator.")
+                    except Exception as e2:
+                        logs.append("Agent fallback error: " + str(e2))
+                        preview_html = local_custom_generator(user_text)
             else:
-                # user didn't check 'Use agent for Custom' -> local generator only
-                preview_html = local_custom_generator(prompt)
-                logs.append("Generated from prompt locally (no agent).")
-    except Exception as e:
-        logs.append("Generation failed: " + str(e))
-        logs.append(traceback.format_exc())
-        preview_html = f"<!doctype html><html><body><pre>{html.escape(traceback.format_exc())}</pre></body></html>"
+                # no LLM -> try agent -> else local generator
+                if agent is not None:
+                    try:
+                        payload = {"user_prompt": user_text}
+                        res = agent.invoke(payload, config={"recursion_limit": 200}) if hasattr(agent, "invoke") else agent(payload)
+                        if isinstance(res, dict) and res.get("built_files"):
+                            raw_bf = res.get("built_files", {})
+                            normalized = {}
+                            for p, meta in (raw_bf.items() if isinstance(raw_bf, dict) else []):
+                                if isinstance(meta, dict) and meta.get("content") is not None:
+                                    normalized[p] = {"written": False, "content": meta["content"]}
+                            if normalized:
+                                preview_html = combine_files_to_html(normalized)
+                                logs.append("Used agent-built files for preview.")
+                            else:
+                                preview_html = local_custom_generator(user_text)
+                                logs.append("Agent returned no in-memory files; used local generator.")
+                        else:
+                            preview_html = local_custom_generator(user_text)
+                            logs.append("Agent returned no usable output; used local generator.")
+                    except Exception as e:
+                        logs.append("Agent failed: " + str(e))
+                        preview_html = local_custom_generator(user_text)
+                else:
+                    preview_html = local_custom_generator(user_text)
+                    logs.append("Generated from prompt locally (no LLM or agent).")
 
-# --- render logs & preview ---
+# ------------------ render output ------------------
 st.markdown("---")
-st.subheader("Preview")
-if preview_html:
-    st.markdown(
-        "<div style='padding:8px;border-radius:8px;background:linear-gradient(90deg,#f8fafc,#fff);box-shadow:0 6px 18px rgba(15,23,42,0.03);margin-bottom:8px'><strong>Live preview below — interactive.</strong></div>",
-        unsafe_allow_html=True,
-    )
-    components.html(preview_html, height=720, scrolling=True)
+if template == "Ask (question)":
+    st.subheader("Answer")
+    if answer_text:
+        # render as markdown when possible
+        try:
+            st.markdown(answer_text)
+        except Exception:
+            st.text(answer_text)
+    else:
+        st.info("No answer produced yet. Try enabling GROQ or check logs below.")
 else:
-    st.info("No preview yet. Enter a prompt and click Generate.")
+    st.subheader("Live preview")
+    if preview_html:
+        components.html(preview_html, height=720, scrolling=True)
+    else:
+        st.info("No preview yet. Run generation.")
 
 st.markdown("----")
 st.subheader("Logs")
@@ -504,3 +381,16 @@ if logs:
         st.write("-", l)
 else:
     st.write("No logs yet.")
+
+# developer note / quick checks
+st.markdown("---")
+st.markdown("**Quick checks:**")
+if os.getenv("GROQ_API_KEY"):
+    st.success("GROQ_API_KEY detected in environment.")
+else:
+    st.warning("GROQ_API_KEY not found. If you want live LLM answers, set GROQ_API_KEY in your environment or Streamlit secrets.")
+
+if agent is None:
+    st.info("Local `agent` not found — that's fine; local generators will be used as fallback.")
+else:
+    st.info("Local `agent` detected — will be used as fallback for generation when selected.")
