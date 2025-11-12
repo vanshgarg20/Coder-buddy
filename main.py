@@ -1,4 +1,4 @@
-# main.py — Coder-buddy (modern UI, toolbar, preview download) with Auto-Debug "Fix my app"
+# main.py — Coder-buddy (modern UI, toolbar, preview download)
 import os
 import re
 import html
@@ -244,13 +244,10 @@ def looks_like_question_text(s: str) -> bool:
             return True
     return False
 
-# Initialize session_state for undo/history of preview
-if "last_preview_html" not in st.session_state:
-    st.session_state["last_preview_html"] = None
-if "original_preview_html" not in st.session_state:
-    st.session_state["original_preview_html"] = None
-if "last_user_prompt" not in st.session_state:
-    st.session_state["last_user_prompt"] = None
+# ---------- run logic (REPLACE existing `if run_btn:` block with this) ----------
+preview_html: Optional[str] = None
+answer_text: Optional[str] = None
+_internal_logs = []
 
 if run_btn:
     user_text = (prompt or "").strip()
@@ -371,20 +368,11 @@ if run_btn:
                     else:
                         preview_html = clean_preview_html(local_custom_generator(user_text))
                         _internal_logs.append("Generated from prompt locally (no LLM or agent)")
-
-            # Save last preview and prompt to session_state for Fix/Rollback
-            if preview_html:
-                # keep original only if not already set for current run
-                st.session_state["original_preview_html"] = st.session_state.get("last_preview_html") or preview_html
-                st.session_state["last_preview_html"] = preview_html
-                st.session_state["last_user_prompt"] = user_text
-
         except Exception as e:
             _internal_logs.append("Unexpected error: " + str(e))
             _internal_logs.append(traceback.format_exc())
             preview_html = clean_preview_html(f"<pre>{html.escape(traceback.format_exc())}</pre>")
-            st.session_state["last_preview_html"] = preview_html
-
+            
 # ---------- render results ----------
 st.markdown("---")
 if mode == "Ask (question)":
@@ -417,107 +405,16 @@ else:
         st.markdown('<div class="small-muted">Preview</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
     with toolbar_col2:
-        if st.session_state.get("last_preview_html"):
+        if preview_html:
             # Download button (keeps)
-            b = st.session_state["last_preview_html"].encode("utf-8")
+            b = preview_html.encode("utf-8")
             st.download_button("Download HTML", b, file_name="preview.html", mime="text/html")
-            # Auto-Debug / Fix button
-            fix_clicked = st.button("Fix my app (Auto-debug)", key="fix_btn")
-            # Rollback button
-            rollback_clicked = st.button("Rollback to previous", key="rollback_btn")
-        else:
-            fix_clicked = False
-            rollback_clicked = False
+            # NOTE: Open-in-new-tab removed intentionally (data URLs are unreliable / blocked)
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # Handle Fix / Rollback actions
-    if fix_clicked and st.session_state.get("last_preview_html"):
-        # Prepare llm if available (use same GROQ checkbox choice)
-        llm_for_fix = None
-        if use_groq:
-            try:
-                from langchain_groq import ChatGroq
-                api_key = os.getenv("GROQ_API_KEY")
-                if not api_key:
-                    raise RuntimeError("GROQ_API_KEY not set in env")
-                llm_for_fix = ChatGroq(model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"), temperature=float(os.getenv("GROQ_TEMPERATURE", "0.2")), api_key=api_key)
-                _internal_logs.append("GROQ initialized for fix")
-            except Exception as e:
-                llm_for_fix = None
-                _internal_logs.append("GROQ init for fix failed: " + str(e))
-
-        # If no llm, try agent fallback
-        if llm_for_fix is None and agent is None:
-            st.warning("Auto-debug requires GROQ or an agent. Enable GROQ or ensure an agent is available.")
-        else:
-            st.info("Auto-debugging — sending the app to the model to fix. This may take a few seconds...")
-            try:
-                app_html_to_fix = st.session_state["last_preview_html"]
-                user_prompt_for_fix = st.session_state.get("last_user_prompt") or ""
-                debug_prompt = (
-                    "You are an expert web developer. A user has an HTML/CSS/JS single-file web app which is not working correctly or has runtime errors. "
-                    "Please **fix the code** so it works as a single self-contained HTML document. "
-                    "Return only the corrected HTML document (no explanations). "
-                    f"Original user request: {user_prompt_for_fix}\n\nAPP_START\n{app_html_to_fix}\nAPP_END\n"
-                    "Be careful to preserve the app behaviour, fix obvious JS/DOM issues, and ensure it runs in a browser."
-                )
-                fixed_raw = None
-                if llm_for_fix is not None:
-                    fixed_raw = call_llm_and_get_text(llm_for_fix, debug_prompt)
-                    _internal_logs.append("Received fix from GROQ")
-                else:
-                    # agent fallback: send as user_prompt and hope agent returns built_files or html
-                    try:
-                        payload = {"user_prompt": "Fix the following HTML/JS app and return corrected index.html: " + app_html_to_fix}
-                        res = agent.invoke(payload, config={"recursion_limit": 200}) if hasattr(agent, "invoke") else agent(payload)
-                        if isinstance(res, dict) and res.get("built_files"):
-                            raw_bf = res.get("built_files", {})
-                            # try to find index.html or any html content
-                            for p, meta in raw_bf.items():
-                                if isinstance(meta, dict) and meta.get("content") and p.lower().endswith(".html"):
-                                    fixed_raw = meta.get("content")
-                                    break
-                            if fixed_raw is None:
-                                # pick any content
-                                for p, meta in raw_bf.items():
-                                    if isinstance(meta, dict) and meta.get("content"):
-                                        fixed_raw = meta.get("content")
-                                        break
-                        elif isinstance(res, str):
-                            fixed_raw = res
-                        _internal_logs.append("Received fix from agent")
-                    except Exception as ae:
-                        _internal_logs.append("Agent fix failed: " + str(ae))
-                        fixed_raw = None
-
-                if fixed_raw:
-                    fixed_html = clean_preview_html(extract_text_from_llm_output(fixed_raw))
-                    # Save rollback copy
-                    st.session_state["original_preview_html"] = st.session_state.get("last_preview_html")
-                    st.session_state["last_preview_html"] = fixed_html
-                    # show success and updated preview
-                    st.success("Auto-debug complete — preview updated with fixed app.")
-                    preview_html = st.session_state["last_preview_html"]
-                else:
-                    st.error("Auto-debug failed: model returned no usable HTML.")
-                    preview_html = st.session_state.get("last_preview_html")
-            except Exception as e:
-                st.error("Auto-debug failed: " + str(e))
-                _internal_logs.append("Auto-debug unexpected error: " + traceback.format_exc())
-                preview_html = st.session_state.get("last_preview_html")
-    elif rollback_clicked:
-        if st.session_state.get("original_preview_html"):
-            st.session_state["last_preview_html"], st.session_state["original_preview_html"] = st.session_state["original_preview_html"], None
-            st.success("Rolled back to previous preview.")
-        else:
-            st.info("No previous preview to roll back to.")
-        preview_html = st.session_state.get("last_preview_html")
-    else:
-        preview_html = st.session_state.get("last_preview_html")
-
-    # Show preview area (white card)
     if preview_html:
         st.markdown("<div class='preview-frame'>", unsafe_allow_html=True)
+        # fixed, readable height for preview
         components.html(preview_html, height=700, scrolling=True)
         st.markdown("</div>", unsafe_allow_html=True)
     else:
