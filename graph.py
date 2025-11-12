@@ -166,24 +166,41 @@ def architect_agent(state: AppState) -> AppState:
     return out
 
 def coder_agent(state: AppState) -> AppState:
+    """
+    Writes files described by TaskPlan only when WRITE_OUTPUT=1.
+    Otherwise, returns built_files in-memory (content included) so the UI can preview.
+    built_files mapping format:
+      path -> {"written": True, "note": "..."}  # when written to disk
+      path -> {"written": False, "content": "<file text>"}  # when kept in-memory
+    """
+    write_to_disk = os.getenv("WRITE_OUTPUT", "0") == "1"
     output_dir = os.getenv("PROJECT_OUTPUT_DIR", "output")
     task_plan: TaskPlan = state["task_plan"]
-    built: Dict[str, str] = {}
+    built: Dict[str, Dict[str, Any]] = {}
 
     for step in task_plan.implementation_steps:
         rel_path = step.filepath
         content = step.current_file_content or ""
-        p = Path(output_dir) / Path(rel_path)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(content, encoding="utf-8")
-        built[str(p)] = f"written ({len(content)} bytes)"
+
+        if write_to_disk:
+            p = Path(output_dir) / Path(rel_path)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(content, encoding="utf-8")
+            built[str(p)] = {"written": True, "note": f"written ({len(content)} bytes)"}
+        else:
+            # do NOT write to disk; keep in-memory
+            built[rel_path] = {"written": False, "content": content}
 
     out: AppState = dict(state)
     out["built_files"] = built
     logs = out.get("logs", [])
-    logs.append(f"coder: wrote {len(built)} file(s) to '{output_dir}/'")
+    if write_to_disk:
+        logs.append(f"coder: wrote {len(built)} file(s) to '{output_dir}/'")
+    else:
+        logs.append(f"coder: prepared {len(built)} file(s) in memory (WRITE_OUTPUT!=1)")
     out["logs"] = logs
     return out
+
 
 # -------------------------
 # Try to import StateGraph (optional). If missing, we'll expose a MockAgent.
