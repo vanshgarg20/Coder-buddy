@@ -1,4 +1,4 @@
-# main.py - Coder-buddy — improved preview cleaning + nicer UI
+# main.py - Coder-buddy — cleaned UI (logs & quick checks removed)
 import os
 import re
 import html
@@ -127,52 +127,32 @@ def call_llm_and_get_text(llm, prompt: str) -> str:
 
 # ---------------- preview cleaning helpers (NEW) ----------------
 def strip_triple_backticks_and_lang(s: str) -> str:
-    """Remove leading/trailing triple backticks and optional language tag (```html)."""
     if not s:
         return s
-    # remove leading/trailing whitespace
     s = s.strip()
-    # if entire response wrapped in triple backticks, remove them
     m = re.match(r"^```(?:\w+)?\s*(.*)\s*```$", s, flags=re.S)
     if m:
         return m.group(1).strip()
-    # remove any leading ```lang or ``` and trailing ``` that sometimes appear
     s = re.sub(r"^```[\w-]*\s*", "", s)
     s = re.sub(r"\s*```$", "", s)
     return s
 
 def extract_inner_html_from_markdown(s: str) -> str:
-    """
-    If the generator returned a markdown block that contains an HTML code block,
-    this will attempt to extract the raw HTML inside the fenced block.
-    """
     if not s:
         return s
-    # find first fenced block that looks like html (```html ... ``` or ``` ... ``` with html)
     m = re.search(r"```(?:html)?\s*(<[^`]+>)\s*```", s, flags=re.S | re.I)
     if m:
         return m.group(1).strip()
-    # fallback: remove triple backticks only
     return strip_triple_backticks_and_lang(s)
 
 def clean_preview_html(raw: str) -> str:
-    """
-    Make sure the string passed to components.html is a bare HTML document or
-    at least a fragment. Strip markdown fences, remove stray leading ticks,
-    and ensure there's a <html> wrapper if missing.
-    """
     if raw is None:
         return ""
     s = raw.strip()
-    # remove markdown fences and language tags
     s = extract_inner_html_from_markdown(s)
-    # If result still starts with a ``` anywhere, remove them
-    s = s.replace("```html", "").replace("```", "")
-    s = s.strip()
-    # If the string looks like partial HTML fragment (starts with '<'), keep it.
+    s = s.replace("```html", "").replace("```", "").strip()
     if s.lower().startswith("<!doctype") or s.lower().startswith("<html") or s.startswith("<"):
         return s
-    # If it's plain text or code (not html), render it inside a minimal safe HTML page
     safe = html.escape(s)
     return f"<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1' /><style>body{{font-family:Inter,Arial,sans-serif;background:#fff;color:#0f172a;padding:20px}}.card{{max-width:900px;margin:0 auto}}</style></head><body><div class='card'><pre style='white-space:pre-wrap;word-break:break-word'>{safe}</pre></div></body></html>"
 
@@ -201,11 +181,11 @@ body{font-family:Inter,Arial,sans-serif;background:#eef6ff;display:flex;align-it
 const keys=['7','8','9','/','4','5','6','*','1','2','3','-','0','.','=','+'];const keysEl=document.getElementById('keys');const display=document.getElementById('display');let expr='';function render(){display.value=expr;}keys.forEach(k=>{const b=document.createElement('button');b.className='key'+(['/','*','-','+','='].includes(k)?' op':'');b.textContent=k;b.onclick=()=>{if(k==='='){try{expr=String(eval(expr))}catch(e){expr='Error'}}else{expr+=k}render()};keysEl.appendChild(b)});render();
 </script></body></html>"""
 
-# ---------------- local fallback generator (same as before, simple) ----------------
+# ---------------- local fallback generator (simple) ----------------
 def local_custom_generator(prompt: str) -> str:
     p = (prompt or "").strip().lower()
     if any(k in p for k in ["note", "notes", "note-taking", "notes app", "notes maker"]):
-        return todo_inline_html()  # reuse todo UI as simple notes fallback
+        return todo_inline_html()
     if "snake" in p:
         return "<!doctype html><html><body><h3>Snake game placeholder</h3></body></html>"
     if "tic" in p and "toe" in p:
@@ -226,10 +206,10 @@ with st.form("gen", clear_on_submit=False):
     submit = st.form_submit_button("Run")
 
 preview_html: Optional[str] = None
-logs = []
 answer_text: Optional[str] = None
+# keep logs internally (not shown)
+logs = []
 
-# helper to detect questions (simple)
 def looks_like_question_text(s: str) -> bool:
     s = (s or "").strip().lower()
     if not s:
@@ -247,11 +227,9 @@ if submit:
     if not user_text:
         st.warning("Please enter a prompt or question.")
     else:
-        # initialize LLM if requested
         llm = None
         if use_groq:
             try:
-                # lazy import to avoid top-level heavy imports if not used
                 from langchain_groq import ChatGroq
                 api_key = os.getenv("GROQ_API_KEY")
                 if not api_key:
@@ -272,7 +250,6 @@ if submit:
                     answer_text = extract_text_from_llm_output(raw)
                     logs.append("Answered using GROQ LLM.")
                 else:
-                    # try agent fallback
                     if agent is not None:
                         try:
                             payload = {"user_prompt": user_text}
@@ -291,7 +268,6 @@ if submit:
                         else:
                             answer_text = "No LLM available. Enable GROQ_API_KEY for live answers."
             else:
-                # Generate app
                 if llm is not None:
                     try:
                         gen_prompt = f"Produce a single self-contained HTML document implementing: {user_text}\nReturn only the HTML document."
@@ -302,32 +278,26 @@ if submit:
                     except Exception as e:
                         logs.append("GROQ generation failed: " + str(e))
                         logs.append("Falling back to agent/local generator.")
-                        # agent fallback or local
                         if agent is not None:
                             try:
                                 payload = {"user_prompt": user_text}
                                 res = agent.invoke(payload, config={"recursion_limit": 200}) if hasattr(agent, "invoke") else agent(payload)
                                 if isinstance(res, dict) and res.get("built_files"):
                                     raw_bf = res.get("built_files", {})
-                                    # normalize to content mapping if available
                                     normalized = {}
                                     for p, meta in (raw_bf.items() if isinstance(raw_bf, dict) else []):
                                         if isinstance(meta, dict) and meta.get("content") is not None:
                                             normalized[p] = {"content": meta["content"]}
-                                    # prefer an index.html
                                     if normalized:
-                                        # combine into HTML
-                                        # simple: if index.html present, use it, else try to merge css/js
                                         if any(k.lower().endswith("index.html") for k in normalized.keys()):
                                             for k, v in normalized.items():
                                                 if k.lower().endswith("index.html"):
                                                     preview_html = clean_preview_html(v["content"])
                                                     break
                                         else:
-                                            # basic combine: put CSS/JS in a wrapper
-                                            css = "".join(v["content"] for p,v in normalized.items() if p.lower().endswith(".css"))
-                                            js = "".join(v["content"] for p,v in normalized.items() if p.lower().endswith(".js"))
-                                            body = next((v["content"] for p,v in normalized.items() if p.lower().endswith(".html")), "<div>Preview</div>")
+                                            css = "".join(v["content"] for p, v in normalized.items() if p.lower().endswith(".css"))
+                                            js = "".join(v["content"] for p, v in normalized.items() if p.lower().endswith(".js"))
+                                            body = next((v["content"] for p, v in normalized.items() if p.lower().endswith(".html")), "<div>Preview</div>")
                                             preview_html = f"<!doctype html><html><head><meta charset='utf-8'><style>{css}</style></head><body>{body}<script>{js}</script></body></html>"
                                         logs.append("Used agent-built files for preview.")
                                     else:
@@ -343,12 +313,10 @@ if submit:
                             preview_html = clean_preview_html(local_custom_generator(user_text))
                             logs.append("No agent; used local generator.")
                 else:
-                    # no LLM, try agent or local
                     if agent is not None:
                         try:
                             payload = {"user_prompt": user_text}
                             res = agent.invoke(payload, config={"recursion_limit": 200}) if hasattr(agent, "invoke") else agent(payload)
-                            # handle agent output similar to above
                             if isinstance(res, dict) and res.get("built_files"):
                                 raw_bf = res.get("built_files", {})
                                 normalized = {}
@@ -357,13 +325,13 @@ if submit:
                                         normalized[p] = {"content": meta["content"]}
                                 if normalized:
                                     if any(k.lower().endswith("index.html") for k in normalized.keys()):
-                                        for k,v in normalized.items():
+                                        for k, v in normalized.items():
                                             if k.lower().endswith("index.html"):
                                                 preview_html = clean_preview_html(v["content"]); break
                                     else:
-                                        css = "".join(v["content"] for p,v in normalized.items() if p.lower().endswith(".css"))
-                                        js = "".join(v["content"] for p,v in normalized.items() if p.lower().endswith(".js"))
-                                        body = next((v["content"] for p,v in normalized.items() if p.lower().endswith(".html")), "<div>Preview</div>")
+                                        css = "".join(v["content"] for p, v in normalized.items() if p.lower().endswith(".css"))
+                                        js = "".join(v["content"] for p, v in normalized.items() if p.lower().endswith(".js"))
+                                        body = next((v["content"] for p, v in normalized.items() if p.lower().endswith(".html")), "<div>Preview</div>")
                                         preview_html = f"<!doctype html><html><head><meta charset='utf-8'><style>{css}</style></head><body>{body}<script>{js}</script></body></html>"
                                     logs.append("Used agent-built files for preview.")
                                 else:
@@ -388,9 +356,7 @@ st.markdown("---")
 if template == "Ask (question)":
     st.subheader("Answer")
     if answer_text:
-        # prefer markdown for readable answers, code block for long text or code
         if answer_text.strip().startswith("<") and "<html" in answer_text.lower():
-            # if LLM returned an HTML snippet by mistake, show an explained notice + preview
             st.info("LLM returned an HTML snippet — rendering below.")
             components.html(clean_preview_html(answer_text), height=480, scrolling=True)
         elif "\n" in answer_text and len(answer_text) > 240:
@@ -398,33 +364,12 @@ if template == "Ask (question)":
         else:
             st.markdown(answer_text)
     else:
-        st.info("No answer produced yet. Try enabling GROQ or check logs below.")
+        st.info("No answer produced yet. Try enabling GROQ or check your environment.")
 else:
     st.subheader("Live preview")
     if preview_html:
-        # wrap preview in a white card so dark-mode Streamlit doesn't hide content
         st.markdown("<div class='preview-frame'>", unsafe_allow_html=True)
         components.html(preview_html, height=680, scrolling=True)
         st.markdown("</div>", unsafe_allow_html=True)
     else:
         st.info("No preview yet. Run generation.")
-
-st.markdown("----")
-st.subheader("Logs")
-if logs:
-    for l in logs:
-        st.write("-", l)
-else:
-    st.write("No logs yet.")
-
-st.markdown("---")
-st.markdown("**Quick checks:**")
-if os.getenv("GROQ_API_KEY"):
-    st.success("GROQ_API_KEY detected in environment.")
-else:
-    st.warning("GROQ_API_KEY not found. To get live LLM answers set GROQ_API_KEY in your environment or Streamlit secrets.")
-
-if agent is None:
-    st.info("Local `agent` not found — local generators will be used as fallback.")
-else:
-    st.info("Local `agent` detected — it will be used as fallback for generation.")
