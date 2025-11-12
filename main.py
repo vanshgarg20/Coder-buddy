@@ -1,8 +1,10 @@
-# main.py — preview forced to white card + injected CSS for readability
+# main.py — Coder-buddy (modern UI, toolbar, preview download / open)
 import os
 import re
 import html
+import base64
 import traceback
+import urllib.parse
 from typing import Any, Dict, Optional
 
 import streamlit as st
@@ -17,39 +19,58 @@ except Exception:
     except Exception:
         agent = None
 
-st.set_page_config(page_title="Coder-buddy — Live Generator & Assistant", layout="wide")
+st.set_page_config(page_title="Coder-buddy — Live Generator", layout="wide", initial_sidebar_state="collapsed")
 
-# page styling (preview-frame ensures visible white card)
+# ---------- Styles & Hero ----------
 st.markdown(
     """
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
     <style>
-    .cb-header { display:flex; gap:16px; align-items:center; padding:20px;
-                background: linear-gradient(90deg, rgba(11,121,255,0.08), rgba(108,92,231,0.04));
-                border-radius:14px; margin-bottom:18px; }
-    .cb-brand { font-weight:800; font-size:20px; color:#58a6ff; }
-    .cb-sub { color:#94a3b8; margin-top:4px; }
-    /* preview container improvements */
-    .preview-frame { width:100%; border-radius:12px; overflow:hidden; border:1px solid rgba(15,23,42,0.08);
-                      box-shadow: 0 12px 40px rgba(2,6,23,0.08); background: #ffffff; padding: 12px; }
+    :root{
+      --bg:#0b1020; --card:#0f1724; --muted:#94a3b8; --accent1:#6c5ce7; --accent2:#0b79ff;
+      --glass: rgba(255,255,255,0.04);
+    }
+    html,body { background: var(--bg); color: #e6eef8; font-family: Inter, Arial, sans-serif; }
+    .hero { display:flex; gap:20px; align-items:center; padding:28px; border-radius:14px;
+            background: linear-gradient(90deg, rgba(12,40,90,0.20), rgba(80,28,120,0.12));
+            box-shadow: 0 8px 30px rgba(2,6,23,0.6); margin-bottom:18px; }
+    .logo { font-weight:800; font-size:22px; color: var(--accent2); letter-spacing:0.3px; }
+    .logo .heart { color:#5be0ff; margin-left:8px; font-size:18px; }
+    .tag { color:var(--muted); margin-top:6px; }
+    .hero-right { margin-left:auto; color:var(--muted); font-size:13px }
+    .panel { background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); padding:20px; border-radius:12px; border:1px solid rgba(255,255,255,0.03); }
+    .form-title { font-size:20px; font-weight:700; color:#fff; margin-bottom:6px; }
+    .muted { color:var(--muted); }
+    .primary-btn { background: linear-gradient(90deg,var(--accent2),var(--accent1)); color:white; border:none; padding:10px 16px; border-radius:10px; font-weight:700; cursor:pointer; }
+    .secondary { background: transparent; border:1px solid rgba(255,255,255,0.06); color:var(--muted); padding:8px 10px; border-radius:8px; }
+    .preview-frame { width:100%; border-radius:12px; overflow:hidden; border:1px solid rgba(255,255,255,0.04); background:#fff; padding:10px; }
+    .toolbar { display:flex; gap:8px; align-items:center; justify-content:space-between; margin-bottom:10px; }
+    .toolbar-left { display:flex; gap:8px; align-items:center; }
+    .small-muted { color: #677487; font-size:13px }
+    /* inputs */
+    .stTextArea > label { color:#fff !important; }
+    .stSelectbox > label { color:#fff !important; }
+    .stCheckbox > label { color:#fff !important; }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
+# Hero
 st.markdown(
-    """
-    <div class="cb-header">
+    f"""
+    <div class="hero">
       <div>
-        <div class="cb-brand">Coder-buddy 💙</div>
-        <div class="cb-sub">Ask a question or generate a small web app — preview runs inline (no disk writes by default).</div>
+        <div class="logo">Coder-buddy <span class="heart">💙</span></div>
+        <div class="tag">Ask a question, or generate a small working web app — preview runs inline, no disk writes by default.</div>
       </div>
-      <div style="margin-left:auto" class="cb-sub">Use GROQ for live answers • Agent fallback available</div>
+      <div class="hero-right">Fast • Modern • Interactive</div>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
-# ---------- helpers ----------
+# ---------- helper functions (LLM & preview cleaning) ----------
 def extract_text_from_llm_output(out: Any) -> str:
     try:
         if out is None:
@@ -68,27 +89,7 @@ def extract_text_from_llm_output(out: Any) -> str:
             return str(getattr(out, "content"))
         if hasattr(out, "text") and getattr(out, "text"):
             return str(getattr(out, "text"))
-        if hasattr(out, "generations"):
-            gens = getattr(out, "generations")
-            if isinstance(gens, (list, tuple)) and len(gens) > 0:
-                first_group = gens[0]
-                if isinstance(first_group, (list, tuple)) and len(first_group) > 0:
-                    first = first_group[0]
-                    if hasattr(first, "text") and getattr(first, "text"):
-                        return str(first.text)
-                    return str(first)
-            return str(out)
-        if hasattr(out, "choices"):
-            choices = getattr(out, "choices")
-            if isinstance(choices, (list, tuple)) and len(choices) > 0:
-                first = choices[0]
-                if isinstance(first, dict):
-                    for k in ("text", "message", "content"):
-                        if k in first and first[k]:
-                            return str(first[k])
-                if hasattr(first, "text") and getattr(first, "text"):
-                    return str(first.text)
-                return str(first)
+        # fallback heuristics
         s = str(out)
         m = re.search(r"content=(?:'|\")(.+?)(?:'|\")", s)
         if m:
@@ -98,33 +99,29 @@ def extract_text_from_llm_output(out: Any) -> str:
         return str(out)
 
 def call_llm_and_get_text(llm, prompt: str) -> str:
+    errors = []
     if llm is None:
         raise RuntimeError("LLM is None")
-    errors = []
     try:
         if hasattr(llm, "invoke"):
-            out = llm.invoke(prompt)
-            return extract_text_from_llm_output(out)
+            return extract_text_from_llm_output(llm.invoke(prompt))
     except Exception as e:
-        errors.append(f"invoke failed: {e}")
+        errors.append("invoke:" + str(e))
     try:
-        out = llm(prompt)
-        return extract_text_from_llm_output(out)
+        return extract_text_from_llm_output(llm(prompt))
     except Exception as e:
-        errors.append(f"call failed: {e}")
+        errors.append("call:" + str(e))
     try:
         if hasattr(llm, "generate"):
-            gen = llm.generate([prompt])
-            return extract_text_from_llm_output(gen)
+            return extract_text_from_llm_output(llm.generate([prompt]))
     except Exception as e:
-        errors.append(f"generate failed: {e}")
-    raise RuntimeError("LLM invocation failed. Attempts:\n" + "\n".join(errors))
+        errors.append("generate:" + str(e))
+    raise RuntimeError("LLM invocation failed: " + " | ".join(errors))
 
-# ---------- preview cleaning + CSS injection ----------
+# preview cleaning & CSS injection
 INJECTED_CSS = """
-/* Force readable colors and white background inside generated preview */
 html, body { background: #ffffff !important; color: #0f172a !important; }
-body { -webkit-font-smoothing:antialiased; font-family: Inter, Arial, sans-serif; }
+body { font-family: Inter, Arial, sans-serif; -webkit-font-smoothing:antialiased; }
 """
 
 def strip_triple_backticks_and_lang(s: str) -> str:
@@ -147,21 +144,14 @@ def extract_inner_html_from_markdown(s: str) -> str:
     return strip_triple_backticks_and_lang(s)
 
 def inject_css_into_html(html_text: str, css: str) -> str:
-    """
-    Ensure the html_text includes <head> and inject css there; if missing, wrap with basic document.
-    """
     if not html_text:
         return f"<!doctype html><html><head><style>{css}</style></head><body></body></html>"
     s = html_text.strip()
-    # if it's fragment starting with <, try to add head
     if s.lower().startswith("<!doctype") or s.lower().startswith("<html"):
         if "</head>" in s.lower():
-            # insert css before </head>
             return re.sub(r"(?i)</head>", f"<style>{css}</style></head>", s, count=1)
         else:
-            # add a head with css after <html>
             return re.sub(r"(?i)<html([^>]*)>", r"<html\1><head><style>" + css + "</style></head>", s, count=1)
-    # if it's a fragment not starting with html, wrap into full doc
     return f"<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><style>{css}</style></head><body>{s}</body></html>"
 
 def clean_preview_html(raw: str) -> str:
@@ -170,11 +160,10 @@ def clean_preview_html(raw: str) -> str:
     s = raw.strip()
     s = extract_inner_html_from_markdown(s)
     s = s.replace("```html", "").replace("```", "").strip()
-    # if the preview already contains full html, inject CSS into head
     cleaned = inject_css_into_html(s, INJECTED_CSS)
     return cleaned
 
-# ---------- simple inline templates ----------
+# ---------- small templates ----------
 def todo_inline_html() -> str:
     return """<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><style>
 body{font-family:Inter,Arial,sans-serif;background:#f6f8fb;padding:24px}
@@ -183,7 +172,7 @@ body{font-family:Inter,Arial,sans-serif;background:#f6f8fb;padding:24px}
 .btn{padding:8px 12px;border-radius:8px;border:none;background:#0b79ff;color:#fff}
 .list{margin-top:12px}
 </style></head><body><div class='card'><h3>Todo</h3><div><input id='t' class='input' placeholder='Add task'><button id='a' class='btn'>Add</button></div><ul id='l' class='list'></ul></div><script>
-const LKEY='cb_todos_v3';let l=JSON.parse(localStorage.getItem(LKEY)||'[]');function r(){const el=document.getElementById('l');el.innerHTML='';l.forEach((t,i)=>{const li=document.createElement('li');li.innerText=t;li.onclick=()=>{l.splice(i,1);localStorage.setItem(LKEY,JSON.stringify(l));r()};el.appendChild(li)})}document.getElementById('a').onclick=()=>{const v=document.getElementById('t').value.trim();if(!v) return; l.unshift(v); localStorage.setItem(LKEY,JSON.stringify(l)); document.getElementById('t').value=''; r()};r();
+const LKEY='cb_todos_v4';let l=JSON.parse(localStorage.getItem(LKEY)||'[]');function r(){const el=document.getElementById('l');el.innerHTML='';l.forEach((t,i)=>{const li=document.createElement('li');li.innerText=t;li.onclick=()=>{l.splice(i,1);localStorage.setItem(LKEY,JSON.stringify(l));r()};el.appendChild(li)})}document.getElementById('a').onclick=()=>{const v=document.getElementById('t').value.trim();if(!v) return; l.unshift(v); localStorage.setItem(LKEY,JSON.stringify(l)); document.getElementById('t').value=''; r()};r();
 </script></body></html>"""
 
 def calc_inline_html() -> str:
@@ -198,7 +187,6 @@ body{font-family:Inter,Arial,sans-serif;background:#eef6ff;display:flex;align-it
 const keys=['7','8','9','/','4','5','6','*','1','2','3','-','0','.','=','+'];const keysEl=document.getElementById('keys');const display=document.getElementById('display');let expr='';function render(){display.value=expr;}keys.forEach(k=>{const b=document.createElement('button');b.className='key'+(['/','*','-','+','='].includes(k)?' op':'');b.textContent=k;b.onclick=()=>{if(k==='='){try{expr=String(eval(expr))}catch(e){expr='Error'}}else{expr+=k}render()};keysEl.appendChild(b)});render();
 </script></body></html>"""
 
-# ---------- local fallback ----------
 def local_custom_generator(prompt: str) -> str:
     p = (prompt or "").strip().lower()
     if any(k in p for k in ["note", "notes", "note-taking", "notes app", "notes maker"]):
@@ -207,24 +195,45 @@ def local_custom_generator(prompt: str) -> str:
         return "<!doctype html><html><body><h3>Snake game placeholder</h3></body></html>"
     if "tic" in p and "toe" in p:
         return "<!doctype html><html><body><h3>Tic Tac Toe placeholder</h3></body></html>"
-    if any(k in p for k in ["calc", "calculator"]):
+    if any(k in p for k in ["calc", "calculator", "stopwatch", "timer"]):
+        # prefer calculator / stopwatch; use calc template for simplicity
         return calc_inline_html()
     if any(k in p for k in ["todo", "task", "todo list"]):
         return todo_inline_html()
     safe = html.escape(prompt or "Generated App")
-    return f"<!doctype html><html><head><meta charset='utf-8'></head><body style='font-family:Inter,Arial,sans-serif;padding:24px'><h3>{safe}</h3><p>This is a lightweight scaffold generated from your prompt.</p></body></html>"
+    return f"<!doctype html><html><head><meta charset='utf-8'></head><body style='font-family:Inter,Arial,sans-serif;padding:24px'><h3>{safe}</h3><p>Light scaffold generated from your prompt.</p></body></html>"
 
-# ---------- UI form ----------
-with st.form("gen", clear_on_submit=False):
-    st.subheader("Enter your prompt or question")
-    template = st.selectbox("Mode", ["Ask (question)", "Generate app (build)"])
-    prompt = st.text_area("Prompt / Question", value="", height=120, placeholder="e.g. create a snake game OR how does map() work in Python?")
+# ---------- form UI (left column) ----------
+col1, col2 = st.columns([1.1, 1])
+with col1:
+    st.markdown('<div class="panel">', unsafe_allow_html=True)
+    st.markdown('<div class="form-title">Enter your prompt or question</div>', unsafe_allow_html=True)
+    mode = st.selectbox("Mode", ["Ask (question)", "Generate app (build)"])
+    prompt = st.text_area("Prompt / Question", value="", height=140, placeholder="e.g. Create a stopwatch with start/stop/reset or How does Python list comprehension work?")
     use_groq = st.checkbox("Use GROQ LLM (requires GROQ_API_KEY env var)", value=bool(os.getenv("GROQ_API_KEY")))
-    submit = st.form_submit_button("Run")
+    run_btn = st.button("Run", key="run", help="Generate / Ask")
+    st.markdown("</div>", unsafe_allow_html=True)
+with col2:
+    # right column: quick CTA / examples
+    st.markdown('<div style="padding:12px;border-radius:12px">', unsafe_allow_html=True)
+    st.markdown("<div style='font-weight:700;font-size:16px;margin-bottom:6px'>Examples</div>", unsafe_allow_html=True)
+    st.markdown("<div class='muted'>Try prompts like:</div>", unsafe_allow_html=True)
+    st.markdown("""
+    <ul class='muted'>
+      <li><code>Create a stopwatch web app with start, stop, and reset</code></li>
+      <li><code>Build a todo list with localStorage and search</code></li>
+      <li><code>Explain how Python's map() works</code></li>
+      <li><code>Create a snake game in plain JavaScript</code></li>
+    </ul>
+    """, unsafe_allow_html=True)
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+    st.markdown("<div class='muted'>Preview toolbar appears once generation finishes. You can download or open the preview.</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
+# ---------- run logic ----------
 preview_html: Optional[str] = None
 answer_text: Optional[str] = None
-logs = []  # internal only
+_internal_logs = []
 
 def looks_like_question_text(s: str) -> bool:
     s = (s or "").strip().lower()
@@ -237,8 +246,7 @@ def looks_like_question_text(s: str) -> bool:
             return True
     return False
 
-# ---------- run logic (unchanged behavior) ----------
-if submit:
+if run_btn:
     user_text = (prompt or "").strip()
     if not user_text:
         st.warning("Please enter a prompt or question.")
@@ -251,49 +259,44 @@ if submit:
                 if not api_key:
                     raise RuntimeError("GROQ_API_KEY not set in env")
                 llm = ChatGroq(model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"), temperature=float(os.getenv("GROQ_TEMPERATURE", "0.2")), api_key=api_key)
-                logs.append("GROQ LLM initialized.")
+                _internal_logs.append("GROQ initialized")
             except Exception as e:
                 llm = None
-                logs.append("GROQ init failed: " + str(e))
+                _internal_logs.append("GROQ init failed: " + str(e))
         else:
-            logs.append("GROQ not selected; using local generator/agent fallback.")
+            _internal_logs.append("GROQ not selected; using local/agent fallback")
 
         try:
-            if template == "Ask (question)":
+            if mode == "Ask (question)":
                 if llm is not None:
                     final_prompt = f"You are a helpful assistant. Answer concisely.\nUser: {user_text}\n"
                     raw = call_llm_and_get_text(llm, final_prompt)
                     answer_text = extract_text_from_llm_output(raw)
-                    logs.append("Answered using GROQ LLM.")
+                    _internal_logs.append("Answered with GROQ")
                 else:
                     if agent is not None:
                         try:
                             payload = {"user_prompt": user_text}
                             res = agent.invoke(payload, config={"recursion_limit": 50}) if hasattr(agent, "invoke") else agent(payload)
                             answer_text = extract_text_from_llm_output(res)
-                            logs.append("Answered using local agent.")
+                            _internal_logs.append("Answered with agent")
                         except Exception as e:
-                            logs.append("Agent failed: " + str(e))
-                            if looks_like_question_text(user_text):
-                                answer_text = "No GROQ available. Enable GROQ_API_KEY for live answers, or try Generate app mode."
-                            else:
-                                answer_text = "No LLM available. Enable GROQ_API_KEY for live answers."
-                    else:
-                        if looks_like_question_text(user_text):
+                            _internal_logs.append("Agent failed: " + str(e))
                             answer_text = "No GROQ available. Enable GROQ_API_KEY for live answers, or try Generate app mode."
-                        else:
-                            answer_text = "No LLM available. Enable GROQ_API_KEY for live answers."
+                    else:
+                        answer_text = "No GROQ available. Enable GROQ_API_KEY for live answers, or try Generate app mode."
             else:
+                # generate app
                 if llm is not None:
                     try:
                         gen_prompt = f"Produce a single self-contained HTML document implementing: {user_text}\nReturn only the HTML document."
                         raw = call_llm_and_get_text(llm, gen_prompt)
                         gen_text = extract_text_from_llm_output(raw)
                         preview_html = clean_preview_html(gen_text)
-                        logs.append("Generated app via GROQ LLM.")
+                        _internal_logs.append("Generated app via GROQ")
                     except Exception as e:
-                        logs.append("GROQ generation failed: " + str(e))
-                        logs.append("Falling back to agent/local generator.")
+                        _internal_logs.append("GROQ generation failed: " + str(e))
+                        # try agent or local
                         if agent is not None:
                             try:
                                 payload = {"user_prompt": user_text}
@@ -315,19 +318,19 @@ if submit:
                                             js = "".join(v["content"] for p, v in normalized.items() if p.lower().endswith(".js"))
                                             body = next((v["content"] for p, v in normalized.items() if p.lower().endswith(".html")), "<div>Preview</div>")
                                             preview_html = f"<!doctype html><html><head><meta charset='utf-8'><style>{css}</style></head><body>{body}<script>{js}</script></body></html>"
-                                        logs.append("Used agent-built files for preview.")
+                                        _internal_logs.append("Used agent-built files for preview")
                                     else:
                                         preview_html = clean_preview_html(local_custom_generator(user_text))
-                                        logs.append("Agent returned no in-memory files; used local generator.")
+                                        _internal_logs.append("Agent returned no in-memory files; used local generator")
                                 else:
                                     preview_html = clean_preview_html(local_custom_generator(user_text))
-                                    logs.append("Agent returned no usable output; used local generator.")
+                                    _internal_logs.append("Agent returned no usable output; used local generator")
                             except Exception as e2:
-                                logs.append("Agent fallback error: " + str(e2))
+                                _internal_logs.append("Agent fallback error: " + str(e2))
                                 preview_html = clean_preview_html(local_custom_generator(user_text))
                         else:
                             preview_html = clean_preview_html(local_custom_generator(user_text))
-                            logs.append("No agent; used local generator.")
+                            _internal_logs.append("No agent; used local generator")
                 else:
                     if agent is not None:
                         try:
@@ -349,47 +352,73 @@ if submit:
                                         js = "".join(v["content"] for p, v in normalized.items() if p.lower().endswith(".js"))
                                         body = next((v["content"] for p, v in normalized.items() if p.lower().endswith(".html")), "<div>Preview</div>")
                                         preview_html = f"<!doctype html><html><head><meta charset='utf-8'><style>{css}</style></head><body>{body}<script>{js}</script></body></html>"
-                                    logs.append("Used agent-built files for preview.")
+                                    _internal_logs.append("Used agent-built files for preview")
                                 else:
                                     preview_html = clean_preview_html(local_custom_generator(user_text))
-                                    logs.append("Agent returned no in-memory files; used local generator.")
+                                    _internal_logs.append("Agent returned no in-memory files; used local generator")
                             else:
                                 preview_html = clean_preview_html(local_custom_generator(user_text))
-                                logs.append("Agent returned no usable output; used local generator.")
+                                _internal_logs.append("Agent returned no usable output; used local generator")
                         except Exception as e:
-                            logs.append("Agent failed: " + str(e))
+                            _internal_logs.append("Agent failed: " + str(e))
                             preview_html = clean_preview_html(local_custom_generator(user_text))
                     else:
                         preview_html = clean_preview_html(local_custom_generator(user_text))
-                        logs.append("Generated from prompt locally (no LLM or agent).")
+                        _internal_logs.append("Generated from prompt locally (no LLM or agent)")
         except Exception as e:
-            logs.append("Unexpected error: " + str(e))
-            logs.append(traceback.format_exc())
-            preview_html = clean_preview_html(f"Error: {str(e)}\n\n{traceback.format_exc()}")
+            _internal_logs.append("Unexpected error: " + str(e))
+            _internal_logs.append(traceback.format_exc())
+            preview_html = clean_preview_html(f"<pre>{html.escape(traceback.format_exc())}</pre>")
 
-# ---------- render output ----------
+# ---------- render results ----------
 st.markdown("---")
-if template == "Ask (question)":
+if mode == "Ask (question)":
+    st.markdown('<div class="panel">', unsafe_allow_html=True)
     st.subheader("Answer")
     if answer_text:
-        if answer_text.strip().startswith("<") and "<html" in answer_text.lower():
-            st.info("LLM returned an HTML snippet — rendering below.")
-            # show HTML snippet inside white preview card
-            st.markdown("<div class='preview-frame'>", unsafe_allow_html=True)
-            components.html(clean_preview_html(answer_text), height=480, scrolling=True)
-            st.markdown("</div>", unsafe_allow_html=True)
-        elif "\n" in answer_text and len(answer_text) > 240:
+        # render simple plain text or code nicely
+        if "\n" in answer_text and len(answer_text) > 300:
             st.code(answer_text)
         else:
-            st.markdown(answer_text)
+            # allow small HTML returns to be shown as text or rendered if HTML-like
+            if answer_text.strip().startswith("<") and "<html" in answer_text.lower():
+                st.info("HTML returned — rendering below.")
+                # show inside white preview card
+                st.markdown("<div class='preview-frame'>", unsafe_allow_html=True)
+                components.html(clean_preview_html(answer_text), height=420, scrolling=True)
+                st.markdown("</div>", unsafe_allow_html=True)
+            else:
+                st.markdown(answer_text)
     else:
-        st.info("No answer produced yet. Try enabling GROQ or check your environment.")
+        st.info("No answer produced yet. Try Generate mode or enable GROQ for live answers.")
+    st.markdown("</div>", unsafe_allow_html=True)
 else:
+    # toolbar + preview area
+    st.markdown('<div class="panel">', unsafe_allow_html=True)
     st.subheader("Live preview")
+    # toolbar: preview height, open / download
+    preview_height = st.slider("Preview height (px)", min_value=300, max_value=1200, value=680, step=50, key="ph")
+    toolbar_col1, toolbar_col2 = st.columns([3,1])
+    with toolbar_col1:
+        st.markdown('<div class="toolbar"><div class="toolbar-left">', unsafe_allow_html=True)
+        st.markdown('<div class="small-muted">Preview</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+    with toolbar_col2:
+        if preview_html:
+            # Download button
+            b = preview_html.encode("utf-8")
+            st.download_button("Download HTML", b, file_name="preview.html", mime="text/html")
+            # Open in new tab link using data URL
+            data_url = "data:text/html;charset=utf-8," + urllib.parse.quote(preview_html)
+            st.markdown(f"<a target='_blank' href='{data_url}' class='secondary' style='text-decoration:none;padding:8px;border-radius:8px;margin-left:6px'>Open in new tab</a>", unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
     if preview_html:
-        # white card wrapper so preview is always readable
         st.markdown("<div class='preview-frame'>", unsafe_allow_html=True)
-        components.html(preview_html, height=720, scrolling=True)
+        components.html(preview_html, height=preview_height, scrolling=True)
         st.markdown("</div>", unsafe_allow_html=True)
     else:
-        st.info("No preview yet. Run generation.")
+        st.info("No preview yet. Run generation to see an interactive preview.")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+# (no visible logs or quick checks shown — internal logs stored in _internal_logs variable)
