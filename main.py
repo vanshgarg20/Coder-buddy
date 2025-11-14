@@ -19,31 +19,29 @@ except Exception:
 
 st.set_page_config(page_title="Coder-buddy — Live Generator", layout="wide", initial_sidebar_state="collapsed")
 
-# ---------- Styles & Hero (enhanced gradients + polish) ----------
+# ---------- Styles & Hero ----------
 st.markdown(
     """
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
     <style>
     :root{
-      --bg1: linear-gradient(135deg,#071426 0%, #0b1020 40%, #071033 100%);
-      --card: rgba(255,255,255,0.03);
-      --muted:#94a3b8; --accent1:#6c5ce7; --accent2:#00c2ff;
+      --bg:#0b1020; --card:#0f1724; --muted:#94a3b8; --accent1:#6c5ce7; --accent2:#0b79ff;
       --glass: rgba(255,255,255,0.04);
     }
-    html,body { background: var(--bg1); color: #e6eef8; font-family: Inter, Arial, sans-serif; }
+    html,body { background: var(--bg); color: #e6eef8; font-family: Inter, Arial, sans-serif; }
     .hero { display:flex; gap:20px; align-items:center; padding:28px; border-radius:14px;
-            background: linear-gradient(90deg, rgba(108,92,231,0.14), rgba(0,194,255,0.06));
-            box-shadow: 0 12px 40px rgba(2,6,23,0.6); margin-bottom:18px; border:1px solid rgba(255,255,255,0.03)}
+            background: linear-gradient(90deg, rgba(12,40,90,0.20), rgba(80,28,120,0.12));
+            box-shadow: 0 8px 30px rgba(2,6,23,0.6); margin-bottom:18px; }
     .logo { font-weight:800; font-size:22px; color: var(--accent2); letter-spacing:0.3px; }
-    .logo .heart { color:#ff7eb6; margin-left:8px; font-size:18px; }
-    .tag { color:var(--muted); margin-top:6px; max-width:720px }
+    .logo .heart { color:#5be0ff; margin-left:8px; font-size:18px; }
+    .tag { color:var(--muted); margin-top:6px; }
     .hero-right { margin-left:auto; color:var(--muted); font-size:13px }
     .panel { background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); padding:20px; border-radius:12px; border:1px solid rgba(255,255,255,0.03); }
     .form-title { font-size:20px; font-weight:700; color:#fff; margin-bottom:6px; }
     .muted { color:var(--muted); }
     .primary-btn { background: linear-gradient(90deg,var(--accent2),var(--accent1)); color:white; border:none; padding:10px 16px; border-radius:10px; font-weight:700; cursor:pointer; }
     .secondary { background: transparent; border:1px solid rgba(255,255,255,0.06); color:var(--muted); padding:8px 10px; border-radius:8px; }
-    .preview-frame { width:100%; border-radius:12px; overflow:hidden; border:1px solid rgba(255,255,255,0.04); background:#fff; padding:10px; box-shadow: 0 8px 30px rgba(2,6,23,0.4) }
+    .preview-frame { width:100%; border-radius:12px; overflow:hidden; border:1px solid rgba(255,255,255,0.04); background:#fff; padding:10px; }
     .toolbar { display:flex; gap:8px; align-items:center; justify-content:space-between; margin-bottom:10px; }
     .toolbar-left { display:flex; gap:8px; align-items:center; }
     .small-muted { color: #677487; font-size:13px }
@@ -51,8 +49,6 @@ st.markdown(
     .stTextArea > label { color:#fff !important; }
     .stSelectbox > label { color:#fff !important; }
     .stCheckbox > label { color:#fff !important; }
-    /* responsive tweaks */
-    @media(max-width:760px){ .hero{flex-direction:column;align-items:flex-start} }
     </style>
     """,
     unsafe_allow_html=True,
@@ -80,7 +76,7 @@ def extract_text_from_llm_output(out: Any) -> str:
         if isinstance(out, str):
             return out
         if isinstance(out, dict):
-            for k in ("text", "content", "output", "answer", "candidates"):
+            for k in ("text", "content", "output", "answer"):
                 if k in out and out[k] is not None:
                     return str(out[k])
             for v in out.values():
@@ -99,7 +95,6 @@ def extract_text_from_llm_output(out: Any) -> str:
         return s
     except Exception:
         return str(out)
-
 
 def call_llm_and_get_text(llm, prompt: str) -> str:
     errors = []
@@ -127,7 +122,6 @@ html, body { background: #ffffff !important; color: #0f172a !important; }
 body { font-family: Inter, Arial, sans-serif; -webkit-font-smoothing:antialiased; }
 """
 
-
 def strip_triple_backticks_and_lang(s: str) -> str:
     if not s:
         return s
@@ -139,7 +133,6 @@ def strip_triple_backticks_and_lang(s: str) -> str:
     s = re.sub(r"\s*```$", "", s)
     return s
 
-
 def extract_inner_html_from_markdown(s: str) -> str:
     if not s:
         return s
@@ -147,7 +140,6 @@ def extract_inner_html_from_markdown(s: str) -> str:
     if m:
         return m.group(1).strip()
     return strip_triple_backticks_and_lang(s)
-
 
 def inject_css_into_html(html_text: str, css: str) -> str:
     if not html_text:
@@ -159,7 +151,6 @@ def inject_css_into_html(html_text: str, css: str) -> str:
         else:
             return re.sub(r"(?i)<html([^>]*)>", r"<html\1><head><style>" + css + "</style></head>", s, count=1)
     return f"<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><style>{css}</style></head><body>{s}</body></html>"
-
 
 def clean_preview_html(raw: str) -> str:
     if raw is None:
@@ -182,7 +173,6 @@ body{font-family:Inter,Arial,sans-serif;background:#f6f8fb;padding:24px}
 const LKEY='cb_todos_v4';let l=JSON.parse(localStorage.getItem(LKEY)||'[]');function r(){const el=document.getElementById('l');el.innerHTML='';l.forEach((t,i)=>{const li=document.createElement('li');li.innerText=t;li.onclick=()=>{l.splice(i,1);localStorage.setItem(LKEY,JSON.stringify(l));r()};el.appendChild(li)})}document.getElementById('a').onclick=()=>{const v=document.getElementById('t').value.trim();if(!v) return; l.unshift(v); localStorage.setItem(LKEY,JSON.stringify(l)); document.getElementById('t').value=''; r()};r();
 </script></body></html>"""
 
-
 def calc_inline_html() -> str:
     return """<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><style>
 body{font-family:Inter,Arial,sans-serif;background:#eef6ff;display:flex;align-items:center;justify-content:center;height:100vh}
@@ -194,7 +184,6 @@ body{font-family:Inter,Arial,sans-serif;background:#eef6ff;display:flex;align-it
 </style></head><body><div class='calc-card'><input id='display' disabled /><div id='keys' class='keys'></div></div><script>
 const keys=['7','8','9','/','4','5','6','*','1','2','3','-','0','.','=','+'];const keysEl=document.getElementById('keys');const display=document.getElementById('display');let expr='';function render(){display.value=expr;}keys.forEach(k=>{const b=document.createElement('button');b.className='key'+(['/','*','-','+','='].includes(k)?' op':'');b.textContent=k;b.onclick=()=>{if(k==='='){try{expr=String(eval(expr))}catch(e){expr='Error'}}else{expr+=k}render()};keysEl.appendChild(b)});render();
 </script></body></html>"""
-
 
 def local_custom_generator(prompt: str) -> str:
     p = (prompt or "").strip().lower()
@@ -220,7 +209,6 @@ with col1:
     mode = st.selectbox("Mode", ["Ask (question)", "Generate app (build)"])
     prompt = st.text_area("Prompt / Question", value="", height=140, placeholder="e.g. Create a stopwatch with start/stop/reset or How does Python list comprehension work?")
     use_groq = st.checkbox("Use GROQ LLM (requires GROQ_API_KEY env var)", value=bool(os.getenv("GROQ_API_KEY")))
-    use_gemini = st.checkbox("Use Gemini (requires GEMINI_API_KEY env var)", value=bool(os.getenv("GEMINI_API_KEY")))
     run_btn = st.button("Run", key="run", help="Generate / Ask")
     st.markdown("</div>", unsafe_allow_html=True)
 with col2:
@@ -245,49 +233,6 @@ preview_html: Optional[str] = None
 answer_text: Optional[str] = None
 _internal_logs = []
 
-# Simple wrapper to attempt initializing Gemini if requested
-class GeminiLLM:
-    def __init__(self, api_key: str, model: str = None, temperature: float = 0.2):
-        self.api_key = api_key
-        self.model = model or os.getenv("GEMINI_MODEL", "gpt-4o-mini")
-        self.temperature = temperature
-        self.client = None
-        try:
-            import google.generativeai as genai
-            genai.configure(api_key=api_key)
-            self.client = genai
-            self._has_generate = hasattr(genai, "generate") or hasattr(genai, "text_generation")
-        except Exception:
-            # graceful fallback - client remains None and calls will fail later
-            self.client = None
-            self._has_generate = False
-
-    def invoke(self, prompt: str):
-        # Try a few common call patterns; return raw response-like object or string
-        if not self.client:
-            raise RuntimeError("Gemini client not configured; check GEMINI_API_KEY env var")
-        try:
-            # preferred: genai.generate (newer versions)
-            if hasattr(self.client, "generate"):
-                resp = self.client.generate(model=self.model, prompt=prompt, temperature=self.temperature)
-                # resp may have a .text or .candidates
-                if hasattr(resp, "text") and resp.text:
-                    return resp.text
-                if hasattr(resp, "candidates") and resp.candidates:
-                    return getattr(resp.candidates[0], "content", resp.candidates[0])
-                return str(resp)
-            # fallback (older SDKs)
-            if hasattr(self.client, "text_generation"):
-                tg = self.client.text_generation
-                r = tg.create(model=self.model, prompt=prompt, temperature=self.temperature)
-                return getattr(r, "text", str(r))
-        except Exception as e:
-            raise
-
-    def __call__(self, prompt: str):
-        return self.invoke(prompt)
-
-
 def looks_like_question_text(s: str) -> bool:
     s = (s or "").strip().lower()
     if not s:
@@ -310,19 +255,7 @@ if run_btn:
         st.warning("Please enter a prompt or question.")
     else:
         llm = None
-        if use_gemini:
-            api_key = os.getenv("GEMINI_API_KEY")
-            if not api_key:
-                _internal_logs.append("GEMINI selected but GEMINI_API_KEY not set")
-            else:
-                try:
-                    llm = GeminiLLM(api_key=api_key, model=os.getenv("GEMINI_MODEL"))
-                    _internal_logs.append("Gemini initialized")
-                except Exception as e:
-                    llm = None
-                    _internal_logs.append("Gemini init failed: " + str(e))
-
-        if use_groq and llm is None:
+        if use_groq:
             try:
                 from langchain_groq import ChatGroq
                 api_key = os.getenv("GROQ_API_KEY")
@@ -334,8 +267,7 @@ if run_btn:
                 llm = None
                 _internal_logs.append("GROQ init failed: " + str(e))
         else:
-            if not use_gemini and not use_groq:
-                _internal_logs.append("No remote LLM selected; using local/agent fallback")
+            _internal_logs.append("GROQ not selected; using local/agent fallback")
 
         try:
             if mode == "Ask (question)":
@@ -343,7 +275,7 @@ if run_btn:
                     final_prompt = f"You are a helpful assistant. Answer concisely.\nUser: {user_text}\n"
                     raw = call_llm_and_get_text(llm, final_prompt)
                     answer_text = extract_text_from_llm_output(raw)
-                    _internal_logs.append("Answered with remote LLM")
+                    _internal_logs.append("Answered with GROQ")
                 else:
                     if agent is not None:
                         try:
@@ -353,9 +285,9 @@ if run_btn:
                             _internal_logs.append("Answered with agent")
                         except Exception as e:
                             _internal_logs.append("Agent failed: " + str(e))
-                            answer_text = "No remote LLM available. Set GEMINI_API_KEY or GROQ_API_KEY for live answers, or try Generate app mode."
+                            answer_text = "No GROQ available. Enable GROQ_API_KEY for live answers, or try Generate app mode."
                     else:
-                        answer_text = "No remote LLM available. Set GEMINI_API_KEY or GROQ_API_KEY for live answers, or try Generate app mode."
+                        answer_text = "No GROQ available. Enable GROQ_API_KEY for live answers, or try Generate app mode."
             else:
                 # generate app
                 if llm is not None:
@@ -364,9 +296,9 @@ if run_btn:
                         raw = call_llm_and_get_text(llm, gen_prompt)
                         gen_text = extract_text_from_llm_output(raw)
                         preview_html = clean_preview_html(gen_text)
-                        _internal_logs.append("Generated app via remote LLM")
+                        _internal_logs.append("Generated app via GROQ")
                     except Exception as e:
-                        _internal_logs.append("Remote LLM generation failed: " + str(e))
+                        _internal_logs.append("GROQ generation failed: " + str(e))
                         # try agent or local
                         if agent is not None:
                             try:
@@ -461,7 +393,7 @@ if mode == "Ask (question)":
             else:
                 st.markdown(answer_text)
     else:
-        st.info("No answer produced yet. Try Generate mode or enable GEMINI/GROQ for live answers.")
+        st.info("No answer produced yet. Try Generate mode or enable GROQ for live answers.")
     st.markdown("</div>", unsafe_allow_html=True)
 else:
     # toolbar + preview area
@@ -490,4 +422,3 @@ else:
     st.markdown("</div>", unsafe_allow_html=True)
 
 # (no visible logs or quick checks shown — internal logs stored in _internal_logs variable)
-# you can inspect logs by printing `_internal_logs` during local debugging
