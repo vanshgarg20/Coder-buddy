@@ -1,4 +1,4 @@
-# main.py — Coder-buddy (modern UI, responsive, animated, gradient)
+# main.py — Coder-buddy (modern UI, toolbar, preview download)
 import os
 import re
 import html
@@ -19,144 +19,50 @@ except Exception:
 
 st.set_page_config(page_title="Coder-buddy — Live Generator", layout="wide", initial_sidebar_state="collapsed")
 
-# ---------- Styles & Hero (enhanced modern design) ----------
+# ---------- Styles & Hero ----------
 st.markdown(
     """
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
     <style>
     :root{
-      --bg-grad-1: #081029;
-      --bg-grad-2: #2b0442;
-      --card-glass: rgba(255,255,255,0.04);
-      --muted: #9aa8c3;
-      --accent1: #6c5ce7;
-      --accent2: #00b4ff;
-      --white: #ffffff;
-      --glass-border: rgba(255,255,255,0.06);
+      --bg:#0b1020; --card:#0f1724; --muted:#94a3b8; --accent1:#6c5ce7; --accent2:#0b79ff;
+      --glass: rgba(255,255,255,0.04);
     }
-
-    /* page background + animated gradient blob */
-    html,body,section { height:100%; margin:0; padding:0; font-family: Inter, Arial, sans-serif; }
-    body {
-      background: radial-gradient(1000px 500px at 10% 20%, rgba(108,92,231,0.10), transparent 10%),
-                  radial-gradient(800px 400px at 90% 80%, rgba(0,180,255,0.06), transparent 10%),
-                  linear-gradient(180deg, var(--bg-grad-1), var(--bg-grad-2));
-      color: #e6eef8;
-      -webkit-font-smoothing: antialiased;
-      -moz-osx-font-smoothing: grayscale;
-      padding: 28px 18px;
-    }
-
-    .container {
-      max-width: 1200px;
-      margin: 0 auto;
-    }
-
-    /* hero */
-    .hero {
-      display:flex; gap:20px; align-items:center; padding:22px; border-radius:14px;
-      background: linear-gradient(90deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
-      border: 1px solid rgba(255,255,255,0.03);
-      box-shadow: 0 20px 60px rgba(2,6,23,0.45);
-      backdrop-filter: blur(6px);
-      transform: translateZ(0);
-      overflow: hidden;
-    }
-    .logo {
-      display:flex; align-items:center; gap:12px;
-    }
-    .logo-badge {
-      width:56px; height:56px; border-radius:12px;
-      background: linear-gradient(135deg, var(--accent1), var(--accent2));
-      display:flex; align-items:center; justify-content:center; font-weight:800; font-size:20px;
-      box-shadow: 0 8px 30px rgba(11,121,255,0.12), inset 0 -6px 18px rgba(0,0,0,0.12);
-      animation: float 6s ease-in-out infinite;
-    }
-    @keyframes float {
-      0% { transform: translateY(0px); }
-      50% { transform: translateY(-6px); }
-      100% { transform: translateY(0px); }
-    }
-    .brand-title { font-weight:800; font-size:20px; color:var(--white); }
-    .brand-sub { color:var(--muted); margin-top:4px; font-size:13px; }
-
-    .hero-right { margin-left:auto; text-align:right; }
-    .chip { display:inline-block; padding:6px 10px; border-radius:999px; background: rgba(255,255,255,0.03); color:var(--muted); font-size:13px; border:1px solid rgba(255,255,255,0.02); }
-
-    /* panels */
-    .panel { background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); padding:18px; border-radius:12px; border:1px solid var(--glass-border); }
-    .form-title { font-size:18px; font-weight:700; color:var(--white); margin-bottom:6px; }
+    html,body { background: var(--bg); color: #e6eef8; font-family: Inter, Arial, sans-serif; }
+    .hero { display:flex; gap:20px; align-items:center; padding:28px; border-radius:14px;
+            background: linear-gradient(90deg, rgba(12,40,90,0.20), rgba(80,28,120,0.12));
+            box-shadow: 0 8px 30px rgba(2,6,23,0.6); margin-bottom:18px; }
+    .logo { font-weight:800; font-size:22px; color: var(--accent2); letter-spacing:0.3px; }
+    .logo .heart { color:#5be0ff; margin-left:8px; font-size:18px; }
+    .tag { color:var(--muted); margin-top:6px; }
+    .hero-right { margin-left:auto; color:var(--muted); font-size:13px }
+    .panel { background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); padding:20px; border-radius:12px; border:1px solid rgba(255,255,255,0.03); }
+    .form-title { font-size:20px; font-weight:700; color:#fff; margin-bottom:6px; }
     .muted { color:var(--muted); }
-
-    /* controls styling (improve appearance of streamlit inputs) */
-    .stTextArea > label, .stSelectbox > label, .stCheckbox > label { color:var(--white) !important; }
-    .primary-btn { background: linear-gradient(90deg,var(--accent2),var(--accent1)); color:white; border:none; padding:10px 16px; border-radius:10px; font-weight:700; cursor:pointer; box-shadow: 0 8px 30px rgba(108,92,231,0.14); }
-
-    /* preview frame white */
-    .preview-frame {
-      width:100%;
-      border-radius:12px;
-      overflow:hidden;
-      border:1px solid rgba(0,0,0,0.06);
-      background:#ffffff; /* white preview area */
-      padding:12px;
-      box-shadow: 0 10px 40px rgba(2,6,23,0.08);
-    }
-
+    .primary-btn { background: linear-gradient(90deg,var(--accent2),var(--accent1)); color:white; border:none; padding:10px 16px; border-radius:10px; font-weight:700; cursor:pointer; }
+    .secondary { background: transparent; border:1px solid rgba(255,255,255,0.06); color:var(--muted); padding:8px 10px; border-radius:8px; }
+    .preview-frame { width:100%; border-radius:12px; overflow:hidden; border:1px solid rgba(255,255,255,0.04); background:#fff; padding:10px; }
     .toolbar { display:flex; gap:8px; align-items:center; justify-content:space-between; margin-bottom:10px; }
     .toolbar-left { display:flex; gap:8px; align-items:center; }
     .small-muted { color: #677487; font-size:13px }
-
-    /* responsive grid layout */
-    .grid {
-      display:grid;
-      grid-template-columns: 1fr 460px;
-      gap:18px;
-      align-items:start;
-    }
-
-    /* mobile responsiveness */
-    @media (max-width: 900px) {
-      .grid { grid-template-columns: 1fr; }
-      .hero { flex-direction: column; align-items:flex-start; gap:12px; }
-      .hero-right { margin-left:0; text-align:left; }
-    }
-
-    /* subtle enter animations for cards */
-    .panel { animation: cardIn 420ms cubic-bezier(.2,.9,.2,1); }
-    @keyframes cardIn {
-      from { transform: translateY(8px); opacity: 0; }
-      to { transform: translateY(0); opacity: 1; }
-    }
-
-    /* footer small */
-    .credits { font-size:12px; color:var(--muted); margin-top:8px; }
-
-    /* example chips */
-    .example { background: rgba(255,255,255,0.02); padding:8px 10px; border-radius:8px; display:inline-block; margin:4px; color:var(--muted); font-size:13px; border:1px solid rgba(255,255,255,0.02); }
+    /* inputs */
+    .stTextArea > label { color:#fff !important; }
+    .stSelectbox > label { color:#fff !important; }
+    .stCheckbox > label { color:#fff !important; }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-# Hero markup
+# Hero
 st.markdown(
-    """
-    <div class="container">
-      <div class="hero">
-        <div class="logo">
-          <div class="logo-badge">CB</div>
-          <div>
-            <div class="brand-title">Coder-buddy <span style="font-weight:600;color: #bfe9ff; font-size:14px">💙</span></div>
-            <div class="brand-sub">AI-powered app generator • Live preview • Auto-debug</div>
-          </div>
-        </div>
-        <div class="hero-right">
-          <div class="chip">Fast • Modern • Interactive</div>
-          <div style="height:6px"></div>
-          <div class="credits">Built with Streamlit • LangChain • GROQ (optional)</div>
-        </div>
+    f"""
+    <div class="hero">
+      <div>
+        <div class="logo">Coder-buddy <span class="heart">💙</span></div>
+        <div class="tag">Ask anything, or instantly build and preview full web apps — powered by AI, crafted in real time, right in your browser.</div>
       </div>
+      <div class="hero-right">Fast • Modern • Interactive</div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -181,6 +87,7 @@ def extract_text_from_llm_output(out: Any) -> str:
             return str(getattr(out, "content"))
         if hasattr(out, "text") and getattr(out, "text"):
             return str(getattr(out, "text"))
+        # fallback heuristics
         s = str(out)
         m = re.search(r"content=(?:'|\")(.+?)(?:'|\")", s)
         if m:
@@ -209,7 +116,7 @@ def call_llm_and_get_text(llm, prompt: str) -> str:
         errors.append("generate:" + str(e))
     raise RuntimeError("LLM invocation failed: " + " | ".join(errors))
 
-# preview cleaning & CSS injection (keeps preview white)
+# preview cleaning & CSS injection
 INJECTED_CSS = """
 html, body { background: #ffffff !important; color: #0f172a !important; }
 body { font-family: Inter, Arial, sans-serif; -webkit-font-smoothing:antialiased; }
@@ -287,6 +194,7 @@ def local_custom_generator(prompt: str) -> str:
     if "tic" in p and "toe" in p:
         return "<!doctype html><html><body><h3>Tic Tac Toe placeholder</h3></body></html>"
     if any(k in p for k in ["calc", "calculator", "stopwatch", "timer"]):
+        # prefer calculator / stopwatch; use calc template for simplicity
         return calc_inline_html()
     if any(k in p for k in ["todo", "task", "todo list"]):
         return todo_inline_html()
@@ -294,7 +202,6 @@ def local_custom_generator(prompt: str) -> str:
     return f"<!doctype html><html><head><meta charset='utf-8'></head><body style='font-family:Inter,Arial,sans-serif;padding:24px'><h3>{safe}</h3><p>Light scaffold generated from your prompt.</p></body></html>"
 
 # ---------- form UI (left column) ----------
-st.markdown('<div class="container">', unsafe_allow_html=True)
 col1, col2 = st.columns([1.1, 1])
 with col1:
     st.markdown('<div class="panel">', unsafe_allow_html=True)
@@ -306,21 +213,20 @@ with col1:
     st.markdown("</div>", unsafe_allow_html=True)
 with col2:
     # right column: quick CTA / examples
-    st.markdown('<div class="panel">', unsafe_allow_html=True)
+    st.markdown('<div style="padding:12px;border-radius:12px">', unsafe_allow_html=True)
     st.markdown("<div style='font-weight:700;font-size:16px;margin-bottom:6px'>Examples</div>", unsafe_allow_html=True)
     st.markdown("<div class='muted'>Try prompts like:</div>", unsafe_allow_html=True)
     st.markdown("""
-    <div style="display:flex;flex-wrap:wrap;margin-top:8px">
-      <div class="example">Create a stopwatch</div>
-      <div class="example">Build a todo with search</div>
-      <div class="example">Explain Python map()</div>
-      <div class="example">Create a calculator</div>
-    </div>
+    <ul class='muted'>
+      <li><code>Create a stopwatch web app with start, stop, and reset</code></li>
+      <li><code>Build a todo list with localStorage and search</code></li>
+      <li><code>Explain how Python's map() works</code></li>
+      <li><code>Create a snake game in plain JavaScript</code></li>
+    </ul>
     """, unsafe_allow_html=True)
-    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
-    st.markdown("<div class='muted'>Preview appears on the right. Use Download to save the preview.</div>", unsafe_allow_html=True)
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+    st.markdown("<div class='muted'>Preview toolbar appears once generation finishes. Use Download to save the preview.</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
-st.markdown('</div>', unsafe_allow_html=True)
 
 # ---------- run logic ----------
 preview_html: Optional[str] = None
@@ -337,6 +243,11 @@ def looks_like_question_text(s: str) -> bool:
         if s.startswith(w + " ") or (" " + w + " ") in s:
             return True
     return False
+
+# ---------- run logic (REPLACE existing `if run_btn:` block with this) ----------
+preview_html: Optional[str] = None
+answer_text: Optional[str] = None
+_internal_logs = []
 
 if run_btn:
     user_text = (prompt or "").strip()
@@ -461,19 +372,21 @@ if run_btn:
             _internal_logs.append("Unexpected error: " + str(e))
             _internal_logs.append(traceback.format_exc())
             preview_html = clean_preview_html(f"<pre>{html.escape(traceback.format_exc())}</pre>")
-
-# ---------- render results (right column) ----------
+            
+# ---------- render results ----------
 st.markdown("---")
-st.markdown('<div class="container">', unsafe_allow_html=True)
 if mode == "Ask (question)":
     st.markdown('<div class="panel">', unsafe_allow_html=True)
     st.subheader("Answer")
     if answer_text:
+        # render simple plain text or code nicely
         if "\n" in answer_text and len(answer_text) > 300:
             st.code(answer_text)
         else:
+            # allow small HTML returns to be shown as text or rendered if HTML-like
             if answer_text.strip().startswith("<") and "<html" in answer_text.lower():
                 st.info("HTML returned — rendering below.")
+                # show inside white preview card
                 st.markdown("<div class='preview-frame'>", unsafe_allow_html=True)
                 components.html(clean_preview_html(answer_text), height=420, scrolling=True)
                 st.markdown("</div>", unsafe_allow_html=True)
@@ -493,18 +406,19 @@ else:
         st.markdown('</div>', unsafe_allow_html=True)
     with toolbar_col2:
         if preview_html:
+            # Download button (keeps)
             b = preview_html.encode("utf-8")
             st.download_button("Download HTML", b, file_name="preview.html", mime="text/html")
+            # NOTE: Open-in-new-tab removed intentionally (data URLs are unreliable / blocked)
     st.markdown('</div>', unsafe_allow_html=True)
 
     if preview_html:
         st.markdown("<div class='preview-frame'>", unsafe_allow_html=True)
+        # fixed, readable height for preview
         components.html(preview_html, height=700, scrolling=True)
         st.markdown("</div>", unsafe_allow_html=True)
     else:
         st.info("No preview yet. Run generation to see an interactive preview.")
     st.markdown("</div>", unsafe_allow_html=True)
 
-st.markdown('</div>', unsafe_allow_html=True)
-
-# (internal logs kept but not shown)
+# (no visible logs or quick checks shown — internal logs stored in _internal_logs variable)
